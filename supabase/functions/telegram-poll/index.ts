@@ -51,7 +51,7 @@ type Step =
   | { name: "set_gender_pref" };
 const stepByChat = new Map<number, Step>();
 
-function getSupabase() {
+export function getSupabase() {
   const url = Deno.env.get("SUPABASE_URL");
   const key = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
   if (!url || !key) throw new Error("Supabase env not configured");
@@ -410,7 +410,7 @@ async function handleStepInput(
 // =========================================================
 // MAIN UPDATE PROCESSOR
 // =========================================================
-async function processUpdate(supabase: ReturnType<typeof getSupabase>, update: TgUpdate) {
+export async function processUpdate(supabase: ReturnType<typeof getSupabase>, update: TgUpdate) {
   const msg = update.message;
   if (!msg || !msg.from || !msg.text) return;
 
