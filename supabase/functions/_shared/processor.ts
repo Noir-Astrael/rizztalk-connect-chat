@@ -291,6 +291,17 @@ async function handleCari(supabase: ReturnType<typeof getSupabase>, profile: Pro
   await sendMessage(partner.telegram_chat_id, T.matchFound(profile.alias, profile.province_name ?? "-", sameProvince));
 }
 
+async function endConversation(
+  supabase: ReturnType<typeof getSupabase>,
+  conv: { id: string; user_a: string; user_b: string },
+  enderId: string,
+) {
+  await supabase
+    .from("conversations")
+    .update({ status: "ended", ended_at: new Date().toISOString(), ended_by: enderId })
+    .eq("id", conv.id);
+}
+
 async function handleStop(supabase: ReturnType<typeof getSupabase>, profile: Profile) {
   const { data: q } = await supabase.from("match_queue").select("*").eq("profile_id", profile.id).maybeSingle();
   if (q) {
@@ -303,13 +314,52 @@ async function handleStop(supabase: ReturnType<typeof getSupabase>, profile: Pro
     await sendMessage(profile.telegram_chat_id, T.notInChat);
     return;
   }
-  await supabase
-    .from("conversations")
-    .update({ status: "ended", ended_at: new Date().toISOString(), ended_by: profile.id })
-    .eq("id", conv.id);
+  await endConversation(supabase, conv, profile.id);
   const partnerId = conv.user_a === profile.id ? conv.user_b : conv.user_a;
   const partner = await getProfileById(supabase, partnerId);
   await sendMessage(profile.telegram_chat_id, T.youLeft);
+  await sendMessage(partner.telegram_chat_id, T.partnerLeft);
+}
+
+async function handleReport(supabase: ReturnType<typeof getSupabase>, profile: Profile) {
+  const conv = await getActiveConversation(supabase, profile.id);
+  if (!conv) {
+    await sendMessage(profile.telegram_chat_id, T.reportNoChat);
+    return;
+  }
+  const reportedId = conv.user_a === profile.id ? conv.user_b : conv.user_a;
+  stepByChat.set(profile.telegram_chat_id, {
+    name: "await_report_reason",
+    conversationId: conv.id,
+    reportedId,
+  });
+  await sendKeyboard(profile.telegram_chat_id, T.reportPrompt, [
+    ["Spam", "Asusila", "Bot"],
+    ["Scam", "Pelecehan", "Lainnya"],
+  ]);
+}
+
+async function handleBlock(supabase: ReturnType<typeof getSupabase>, profile: Profile) {
+  const conv = await getActiveConversation(supabase, profile.id);
+  if (!conv) {
+    await sendMessage(profile.telegram_chat_id, T.blockNoChat);
+    return;
+  }
+  const blockedId = conv.user_a === profile.id ? conv.user_b : conv.user_a;
+  const partner = await getProfileById(supabase, blockedId);
+
+  const { error } = await supabase.from("user_blocks").insert({
+    blocker_id: profile.id,
+    blocked_id: blockedId,
+  });
+  if (error?.message.includes("duplicate")) {
+    await sendMessage(profile.telegram_chat_id, T.blockAlready);
+  } else if (error) {
+    console.error("block insert failed", error);
+  }
+
+  await endConversation(supabase, conv, profile.id);
+  await removeKeyboard(profile.telegram_chat_id, T.blockSuccess(partner.alias));
   await sendMessage(partner.telegram_chat_id, T.partnerLeft);
 }
 
