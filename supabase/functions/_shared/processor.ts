@@ -183,6 +183,16 @@ async function tryMatch(supabase: ReturnType<typeof getSupabase>, profile: Profi
 
   if (!candidates || candidates.length === 0) return null;
 
+  // Ambil daftar block dua arah
+  const { data: blocks } = await supabase
+    .from("user_blocks")
+    .select("blocker_id, blocked_id")
+    .or(`blocker_id.eq.${profile.id},blocked_id.eq.${profile.id}`);
+  const blockedSet = new Set<string>();
+  for (const b of blocks ?? []) {
+    blockedSet.add(b.blocker_id === profile.id ? b.blocked_id : b.blocker_id);
+  }
+
   const myInterests = new Set(await getInterests(supabase, profile.id));
   const myPref = profile.is_premium ? profile.gender_preference : "any";
 
