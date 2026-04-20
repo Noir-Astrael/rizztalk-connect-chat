@@ -36,7 +36,8 @@ type Step =
   | { name: "set_province" }
   | { name: "set_interests" }
   | { name: "set_bio" }
-  | { name: "set_gender_pref" };
+  | { name: "set_gender_pref" }
+  | { name: "await_report_reason"; conversationId: string; reportedId: string };
 const stepByChat = new Map<number, Step>();
 
 export function getSupabase() {
@@ -56,6 +57,8 @@ const T = {
     `/profile — atur profil (gender, lokasi, minat, bio)\n` +
     `/cari — cari teman ngobrol baru\n` +
     `/stop — akhiri obrolan saat ini / keluar antrean\n` +
+    `/report — laporkan lawan chat (spam/asusila/bot/scam)\n` +
+    `/block — blokir lawan chat agar tidak di-match lagi\n` +
     `/me — lihat profil kamu\n` +
     `/premium — info upgrade premium\n` +
     `/help — bantuan`,
@@ -84,6 +87,13 @@ const T = {
     `• Skip antrean lebih cepat\n` +
     `• Unban instan\n\n` +
     `Pembayaran segera tersedia (Midtrans + transfer manual).`,
+  reportNoChat: `ℹ️ Kamu tidak sedang ngobrol. /report hanya bisa dipakai saat chat aktif.`,
+  reportPrompt: `🚩 Pilih alasan laporan:`,
+  reportSuccess: `✅ Laporan terkirim. Terima kasih sudah bantu jaga komunitas.\nObrolan otomatis diakhiri. Ketik /cari untuk cari yang baru.`,
+  reportAlready: `ℹ️ Kamu sudah pernah melaporkan user ini di obrolan ini.`,
+  blockNoChat: `ℹ️ Kamu tidak sedang ngobrol. /block hanya bisa dipakai saat chat aktif.`,
+  blockSuccess: (alias: string) => `🚫 <b>${alias}</b> diblokir. Kalian tidak akan di-match lagi.\nObrolan diakhiri.`,
+  blockAlready: `ℹ️ User ini sudah ada di daftar block kamu.`,
   promptAlias: `Ketik <b>nama alias</b> kamu (3–20 karakter, akan ditampilkan ke lawan chat):`,
   promptGender: `Pilih <b>gender</b> kamu:`,
   promptProvince: `Ketik <b>nama provinsi</b> kamu (mis. "DKI Jakarta", "Jawa Barat"):`,
@@ -173,6 +183,16 @@ async function tryMatch(supabase: ReturnType<typeof getSupabase>, profile: Profi
 
   if (!candidates || candidates.length === 0) return null;
 
+  // Ambil daftar block dua arah
+  const { data: blocks } = await supabase
+    .from("user_blocks")
+    .select("blocker_id, blocked_id")
+    .or(`blocker_id.eq.${profile.id},blocked_id.eq.${profile.id}`);
+  const blockedSet = new Set<string>();
+  for (const b of blocks ?? []) {
+    blockedSet.add(b.blocker_id === profile.id ? b.blocked_id : b.blocker_id);
+  }
+
   const myInterests = new Set(await getInterests(supabase, profile.id));
   const myPref = profile.is_premium ? profile.gender_preference : "any";
 
@@ -180,6 +200,7 @@ async function tryMatch(supabase: ReturnType<typeof getSupabase>, profile: Profi
   const scored: Scored[] = [];
 
   for (const c of candidates) {
+    if (blockedSet.has(c.profile_id)) continue;
     if (myPref !== "any" && c.gender && c.gender !== myPref) continue;
     if (c.is_premium && c.gender_preference !== "any" && profile.gender && c.gender_preference !== profile.gender) continue;
 
@@ -270,6 +291,17 @@ async function handleCari(supabase: ReturnType<typeof getSupabase>, profile: Pro
   await sendMessage(partner.telegram_chat_id, T.matchFound(profile.alias, profile.province_name ?? "-", sameProvince));
 }
 
+async function endConversation(
+  supabase: ReturnType<typeof getSupabase>,
+  conv: { id: string; user_a: string; user_b: string },
+  enderId: string,
+) {
+  await supabase
+    .from("conversations")
+    .update({ status: "ended", ended_at: new Date().toISOString(), ended_by: enderId })
+    .eq("id", conv.id);
+}
+
 async function handleStop(supabase: ReturnType<typeof getSupabase>, profile: Profile) {
   const { data: q } = await supabase.from("match_queue").select("*").eq("profile_id", profile.id).maybeSingle();
   if (q) {
@@ -282,13 +314,52 @@ async function handleStop(supabase: ReturnType<typeof getSupabase>, profile: Pro
     await sendMessage(profile.telegram_chat_id, T.notInChat);
     return;
   }
-  await supabase
-    .from("conversations")
-    .update({ status: "ended", ended_at: new Date().toISOString(), ended_by: profile.id })
-    .eq("id", conv.id);
+  await endConversation(supabase, conv, profile.id);
   const partnerId = conv.user_a === profile.id ? conv.user_b : conv.user_a;
   const partner = await getProfileById(supabase, partnerId);
   await sendMessage(profile.telegram_chat_id, T.youLeft);
+  await sendMessage(partner.telegram_chat_id, T.partnerLeft);
+}
+
+async function handleReport(supabase: ReturnType<typeof getSupabase>, profile: Profile) {
+  const conv = await getActiveConversation(supabase, profile.id);
+  if (!conv) {
+    await sendMessage(profile.telegram_chat_id, T.reportNoChat);
+    return;
+  }
+  const reportedId = conv.user_a === profile.id ? conv.user_b : conv.user_a;
+  stepByChat.set(profile.telegram_chat_id, {
+    name: "await_report_reason",
+    conversationId: conv.id,
+    reportedId,
+  });
+  await sendKeyboard(profile.telegram_chat_id, T.reportPrompt, [
+    ["Spam", "Asusila", "Bot"],
+    ["Scam", "Pelecehan", "Lainnya"],
+  ]);
+}
+
+async function handleBlock(supabase: ReturnType<typeof getSupabase>, profile: Profile) {
+  const conv = await getActiveConversation(supabase, profile.id);
+  if (!conv) {
+    await sendMessage(profile.telegram_chat_id, T.blockNoChat);
+    return;
+  }
+  const blockedId = conv.user_a === profile.id ? conv.user_b : conv.user_a;
+  const partner = await getProfileById(supabase, blockedId);
+
+  const { error } = await supabase.from("user_blocks").insert({
+    blocker_id: profile.id,
+    blocked_id: blockedId,
+  });
+  if (error?.message.includes("duplicate")) {
+    await sendMessage(profile.telegram_chat_id, T.blockAlready);
+  } else if (error) {
+    console.error("block insert failed", error);
+  }
+
+  await endConversation(supabase, conv, profile.id);
+  await removeKeyboard(profile.telegram_chat_id, T.blockSuccess(partner.alias));
   await sendMessage(partner.telegram_chat_id, T.partnerLeft);
 }
 
@@ -374,6 +445,57 @@ async function handleStepInput(
     return true;
   }
 
+  if (step.name === "await_report_reason") {
+    const reasonMap: Record<string, "spam" | "nsfw" | "bot" | "scam" | "harassment" | "other"> = {
+      "spam": "spam",
+      "asusila": "nsfw", "nsfw": "nsfw", "porno": "nsfw",
+      "bot": "bot",
+      "scam": "scam", "penipuan": "scam",
+      "pelecehan": "harassment", "harassment": "harassment",
+      "lainnya": "other", "other": "other",
+    };
+    const reason = reasonMap[text.trim().toLowerCase()];
+    if (!reason) {
+      await sendKeyboard(profile.telegram_chat_id, "Pilih dari tombol di bawah:", [
+        ["Spam", "Asusila", "Bot"],
+        ["Scam", "Pelecehan", "Lainnya"],
+      ]);
+      return true;
+    }
+
+    const { data: existing } = await supabase
+      .from("user_reports")
+      .select("id")
+      .eq("reporter_id", profile.id)
+      .eq("reported_id", step.reportedId)
+      .eq("conversation_id", step.conversationId)
+      .maybeSingle();
+
+    if (existing) {
+      stepByChat.set(profile.telegram_chat_id, { name: "idle" });
+      await removeKeyboard(profile.telegram_chat_id, T.reportAlready);
+      return true;
+    }
+
+    await supabase.from("user_reports").insert({
+      reporter_id: profile.id,
+      reported_id: step.reportedId,
+      conversation_id: step.conversationId,
+      reason,
+    });
+
+    const conv = await getActiveConversation(supabase, profile.id);
+    if (conv && conv.id === step.conversationId) {
+      await endConversation(supabase, conv, profile.id);
+      const partner = await getProfileById(supabase, step.reportedId);
+      await sendMessage(partner.telegram_chat_id, T.partnerLeft);
+    }
+
+    stepByChat.set(profile.telegram_chat_id, { name: "idle" });
+    await removeKeyboard(profile.telegram_chat_id, T.reportSuccess);
+    return true;
+  }
+
   return false;
 }
 
@@ -417,6 +539,8 @@ export async function processUpdate(supabase: ReturnType<typeof getSupabase>, up
       case "/match": return handleCari(supabase, profile);
       case "/stop":
       case "/end": return handleStop(supabase, profile);
+      case "/report": return handleReport(supabase, profile);
+      case "/block": return handleBlock(supabase, profile);
       case "/premium": return handlePremium(profile);
       default:
         await sendMessage(profile.telegram_chat_id, `Perintah tidak dikenal. Ketik /help.`);

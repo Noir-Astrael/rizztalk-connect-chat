@@ -275,6 +275,42 @@ export type Database = {
         }
         Relationships: []
       }
+      user_blocks: {
+        Row: {
+          blocked_id: string
+          blocker_id: string
+          created_at: string
+          id: string
+        }
+        Insert: {
+          blocked_id: string
+          blocker_id: string
+          created_at?: string
+          id?: string
+        }
+        Update: {
+          blocked_id?: string
+          blocker_id?: string
+          created_at?: string
+          id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "user_blocks_blocked_id_fkey"
+            columns: ["blocked_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "user_blocks_blocker_id_fkey"
+            columns: ["blocker_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       user_interests: {
         Row: {
           created_at: string
@@ -301,6 +337,74 @@ export type Database = {
           {
             foreignKeyName: "user_interests_profile_id_fkey"
             columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      user_reports: {
+        Row: {
+          conversation_id: string | null
+          created_at: string
+          id: string
+          note: string | null
+          reason: Database["public"]["Enums"]["report_reason"]
+          reported_id: string
+          reporter_id: string
+          reviewed_at: string | null
+          reviewed_by: string | null
+          status: Database["public"]["Enums"]["report_status"]
+        }
+        Insert: {
+          conversation_id?: string | null
+          created_at?: string
+          id?: string
+          note?: string | null
+          reason?: Database["public"]["Enums"]["report_reason"]
+          reported_id: string
+          reporter_id: string
+          reviewed_at?: string | null
+          reviewed_by?: string | null
+          status?: Database["public"]["Enums"]["report_status"]
+        }
+        Update: {
+          conversation_id?: string | null
+          created_at?: string
+          id?: string
+          note?: string | null
+          reason?: Database["public"]["Enums"]["report_reason"]
+          reported_id?: string
+          reporter_id?: string
+          reviewed_at?: string | null
+          reviewed_by?: string | null
+          status?: Database["public"]["Enums"]["report_status"]
+        }
+        Relationships: [
+          {
+            foreignKeyName: "user_reports_conversation_id_fkey"
+            columns: ["conversation_id"]
+            isOneToOne: false
+            referencedRelation: "conversations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "user_reports_reported_id_fkey"
+            columns: ["reported_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "user_reports_reporter_id_fkey"
+            columns: ["reporter_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "user_reports_reviewed_by_fkey"
+            columns: ["reviewed_by"]
             isOneToOne: false
             referencedRelation: "profiles"
             referencedColumns: ["id"]
@@ -368,6 +472,8 @@ export type Database = {
       gender_type: "male" | "female" | "other"
       interest_kind: "preset" | "custom"
       queue_status: "waiting" | "matched" | "cancelled"
+      report_reason: "spam" | "nsfw" | "bot" | "scam" | "harassment" | "other"
+      report_status: "pending" | "reviewed" | "dismissed"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -501,6 +607,8 @@ export const Constants = {
       gender_type: ["male", "female", "other"],
       interest_kind: ["preset", "custom"],
       queue_status: ["waiting", "matched", "cancelled"],
+      report_reason: ["spam", "nsfw", "bot", "scam", "harassment", "other"],
+      report_status: ["pending", "reviewed", "dismissed"],
     },
   },
 } as const
