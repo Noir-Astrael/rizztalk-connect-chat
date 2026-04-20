@@ -445,6 +445,57 @@ async function handleStepInput(
     return true;
   }
 
+  if (step.name === "await_report_reason") {
+    const reasonMap: Record<string, "spam" | "nsfw" | "bot" | "scam" | "harassment" | "other"> = {
+      "spam": "spam",
+      "asusila": "nsfw", "nsfw": "nsfw", "porno": "nsfw",
+      "bot": "bot",
+      "scam": "scam", "penipuan": "scam",
+      "pelecehan": "harassment", "harassment": "harassment",
+      "lainnya": "other", "other": "other",
+    };
+    const reason = reasonMap[text.trim().toLowerCase()];
+    if (!reason) {
+      await sendKeyboard(profile.telegram_chat_id, "Pilih dari tombol di bawah:", [
+        ["Spam", "Asusila", "Bot"],
+        ["Scam", "Pelecehan", "Lainnya"],
+      ]);
+      return true;
+    }
+
+    const { data: existing } = await supabase
+      .from("user_reports")
+      .select("id")
+      .eq("reporter_id", profile.id)
+      .eq("reported_id", step.reportedId)
+      .eq("conversation_id", step.conversationId)
+      .maybeSingle();
+
+    if (existing) {
+      stepByChat.set(profile.telegram_chat_id, { name: "idle" });
+      await removeKeyboard(profile.telegram_chat_id, T.reportAlready);
+      return true;
+    }
+
+    await supabase.from("user_reports").insert({
+      reporter_id: profile.id,
+      reported_id: step.reportedId,
+      conversation_id: step.conversationId,
+      reason,
+    });
+
+    const conv = await getActiveConversation(supabase, profile.id);
+    if (conv && conv.id === step.conversationId) {
+      await endConversation(supabase, conv, profile.id);
+      const partner = await getProfileById(supabase, step.reportedId);
+      await sendMessage(partner.telegram_chat_id, T.partnerLeft);
+    }
+
+    stepByChat.set(profile.telegram_chat_id, { name: "idle" });
+    await removeKeyboard(profile.telegram_chat_id, T.reportSuccess);
+    return true;
+  }
+
   return false;
 }
 
