@@ -200,6 +200,7 @@ async function tryMatch(supabase: ReturnType<typeof getSupabase>, profile: Profi
   const scored: Scored[] = [];
 
   for (const c of candidates) {
+    if (blockedSet.has(c.profile_id)) continue;
     if (myPref !== "any" && c.gender && c.gender !== myPref) continue;
     if (c.is_premium && c.gender_preference !== "any" && profile.gender && c.gender_preference !== profile.gender) continue;
 
