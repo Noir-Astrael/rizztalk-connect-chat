@@ -1,5 +1,6 @@
 import heroBg from "@/assets/rizztalk-hero.jpg";
-import { ArrowRight, Sparkles } from "lucide-react";
+import { ArrowRight, Send, Sparkles } from "lucide-react";
+import { BOT_START_URL, BOT_USERNAME } from "@/config/bot";
 
 export const Hero = () => (
   <section
@@ -39,27 +40,33 @@ export const Hero = () => (
         </h1>
 
         <p className="text-lg sm:text-xl text-muted-foreground max-w-2xl mx-auto mb-10 leading-relaxed">
-          Rizztalk adalah platform random chat anonim Indonesia.
-          Match real-time berbasis lokasi, alias sesi otomatis, dan AI fallback
-          — semua dalam satu pengalaman yang aman dan elegan.
+          Rizztalk adalah random chat anonim Indonesia, langsung di
+          Telegram. Match berbasis lokasi, gender, &amp; minat — alias
+          sesi otomatis, dengan AI fallback saat sepi.
         </p>
 
         <div className="flex flex-col sm:flex-row gap-4 justify-center">
           <a
             id="cta"
-            href="#fitur"
+            href={BOT_START_URL}
+            target="_blank"
+            rel="noopener noreferrer"
             className="group inline-flex items-center justify-center gap-2 px-8 py-4 rounded-full bg-gradient-primary text-primary-foreground font-semibold shadow-neon-cyan hover:shadow-neon-magenta transition-all duration-500 hover:scale-105"
           >
-            Mulai Sekarang
+            <Send className="w-4 h-4" />
+            Buka di Telegram
             <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
           </a>
           <a
-            href="#arsitektur"
+            href="#fitur"
             className="inline-flex items-center justify-center gap-2 px-8 py-4 rounded-full glass-card hover:bg-muted/30 font-medium transition-all duration-300"
           >
-            Baca White Paper
+            Lihat Fitur
           </a>
         </div>
+        <p className="text-xs text-muted-foreground/70 mt-4 font-mono">
+          @{BOT_USERNAME}
+        </p>
 
         {/* Stats */}
         <div className="grid grid-cols-3 gap-4 sm:gap-8 mt-20 max-w-2xl mx-auto">
