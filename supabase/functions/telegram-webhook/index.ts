@@ -2,7 +2,7 @@
 // Telegram POSTs each update directly to this endpoint (no polling delay).
 // Secured via X-Telegram-Bot-Api-Secret-Token header.
 
-import { processUpdate, getSupabase } from "../telegram-poll/index.ts";
+import { processUpdate, getSupabase } from "../_shared/processor.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
