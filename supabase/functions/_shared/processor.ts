@@ -56,6 +56,8 @@ const T = {
     `/profile — atur profil (gender, lokasi, minat, bio)\n` +
     `/cari — cari teman ngobrol baru\n` +
     `/stop — akhiri obrolan saat ini / keluar antrean\n` +
+    `/report — laporkan lawan chat (spam/asusila/bot/scam)\n` +
+    `/block — blokir lawan chat agar tidak di-match lagi\n` +
     `/me — lihat profil kamu\n` +
     `/premium — info upgrade premium\n` +
     `/help — bantuan`,
