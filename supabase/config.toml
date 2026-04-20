@@ -2,3 +2,9 @@ project_id = "lrhxtsnammweqylqbsuv"
 
 [functions.telegram-poll]
 verify_jwt = false
+
+[functions.telegram-webhook]
+verify_jwt = false
+
+[functions.telegram-set-webhook]
+verify_jwt = false
