@@ -539,6 +539,8 @@ export async function processUpdate(supabase: ReturnType<typeof getSupabase>, up
       case "/match": return handleCari(supabase, profile);
       case "/stop":
       case "/end": return handleStop(supabase, profile);
+      case "/report": return handleReport(supabase, profile);
+      case "/block": return handleBlock(supabase, profile);
       case "/premium": return handlePremium(profile);
       default:
         await sendMessage(profile.telegram_chat_id, `Perintah tidak dikenal. Ketik /help.`);
