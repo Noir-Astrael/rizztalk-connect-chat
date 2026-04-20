@@ -14,16 +14,360 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      conversations: {
+        Row: {
+          ended_at: string | null
+          ended_by: string | null
+          id: string
+          match_score: number
+          same_province: boolean
+          started_at: string
+          status: Database["public"]["Enums"]["conversation_status"]
+          user_a: string
+          user_b: string
+        }
+        Insert: {
+          ended_at?: string | null
+          ended_by?: string | null
+          id?: string
+          match_score?: number
+          same_province?: boolean
+          started_at?: string
+          status?: Database["public"]["Enums"]["conversation_status"]
+          user_a: string
+          user_b: string
+        }
+        Update: {
+          ended_at?: string | null
+          ended_by?: string | null
+          id?: string
+          match_score?: number
+          same_province?: boolean
+          started_at?: string
+          status?: Database["public"]["Enums"]["conversation_status"]
+          user_a?: string
+          user_b?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "conversations_ended_by_fkey"
+            columns: ["ended_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "conversations_user_a_fkey"
+            columns: ["user_a"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "conversations_user_b_fkey"
+            columns: ["user_b"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      match_queue: {
+        Row: {
+          gender: Database["public"]["Enums"]["gender_type"] | null
+          gender_preference: Database["public"]["Enums"]["gender_preference"]
+          id: string
+          is_premium: boolean
+          joined_at: string
+          profile_id: string
+          province_code: string | null
+          status: Database["public"]["Enums"]["queue_status"]
+          updated_at: string
+        }
+        Insert: {
+          gender?: Database["public"]["Enums"]["gender_type"] | null
+          gender_preference?: Database["public"]["Enums"]["gender_preference"]
+          id?: string
+          is_premium?: boolean
+          joined_at?: string
+          profile_id: string
+          province_code?: string | null
+          status?: Database["public"]["Enums"]["queue_status"]
+          updated_at?: string
+        }
+        Update: {
+          gender?: Database["public"]["Enums"]["gender_type"] | null
+          gender_preference?: Database["public"]["Enums"]["gender_preference"]
+          id?: string
+          is_premium?: boolean
+          joined_at?: string
+          profile_id?: string
+          province_code?: string | null
+          status?: Database["public"]["Enums"]["queue_status"]
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "match_queue_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: true
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      messages: {
+        Row: {
+          content: string
+          conversation_id: string
+          created_at: string
+          id: string
+          sender_id: string
+          telegram_message_id: number | null
+        }
+        Insert: {
+          content: string
+          conversation_id: string
+          created_at?: string
+          id?: string
+          sender_id: string
+          telegram_message_id?: number | null
+        }
+        Update: {
+          content?: string
+          conversation_id?: string
+          created_at?: string
+          id?: string
+          sender_id?: string
+          telegram_message_id?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "messages_conversation_id_fkey"
+            columns: ["conversation_id"]
+            isOneToOne: false
+            referencedRelation: "conversations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "messages_sender_id_fkey"
+            columns: ["sender_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      profiles: {
+        Row: {
+          alias: string
+          ban_reason: string | null
+          bio: string | null
+          birth_year: number | null
+          created_at: string
+          gender: Database["public"]["Enums"]["gender_type"] | null
+          gender_preference: Database["public"]["Enums"]["gender_preference"]
+          id: string
+          is_banned_until: string | null
+          is_premium: boolean
+          language_code: string
+          last_seen_at: string
+          onboarding_completed: boolean
+          premium_until: string | null
+          province_code: string | null
+          province_name: string | null
+          telegram_chat_id: number
+          telegram_user_id: number
+          telegram_username: string | null
+          trust_score: number
+          updated_at: string
+        }
+        Insert: {
+          alias: string
+          ban_reason?: string | null
+          bio?: string | null
+          birth_year?: number | null
+          created_at?: string
+          gender?: Database["public"]["Enums"]["gender_type"] | null
+          gender_preference?: Database["public"]["Enums"]["gender_preference"]
+          id?: string
+          is_banned_until?: string | null
+          is_premium?: boolean
+          language_code?: string
+          last_seen_at?: string
+          onboarding_completed?: boolean
+          premium_until?: string | null
+          province_code?: string | null
+          province_name?: string | null
+          telegram_chat_id: number
+          telegram_user_id: number
+          telegram_username?: string | null
+          trust_score?: number
+          updated_at?: string
+        }
+        Update: {
+          alias?: string
+          ban_reason?: string | null
+          bio?: string | null
+          birth_year?: number | null
+          created_at?: string
+          gender?: Database["public"]["Enums"]["gender_type"] | null
+          gender_preference?: Database["public"]["Enums"]["gender_preference"]
+          id?: string
+          is_banned_until?: string | null
+          is_premium?: boolean
+          language_code?: string
+          last_seen_at?: string
+          onboarding_completed?: boolean
+          premium_until?: string | null
+          province_code?: string | null
+          province_name?: string | null
+          telegram_chat_id?: number
+          telegram_user_id?: number
+          telegram_username?: string | null
+          trust_score?: number
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      telegram_bot_state: {
+        Row: {
+          id: number
+          last_polled_at: string | null
+          update_offset: number
+          updated_at: string
+        }
+        Insert: {
+          id: number
+          last_polled_at?: string | null
+          update_offset?: number
+          updated_at?: string
+        }
+        Update: {
+          id?: number
+          last_polled_at?: string | null
+          update_offset?: number
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      telegram_updates_log: {
+        Row: {
+          chat_id: number | null
+          from_user_id: number | null
+          processed_at: string
+          raw_update: Json
+          update_id: number
+        }
+        Insert: {
+          chat_id?: number | null
+          from_user_id?: number | null
+          processed_at?: string
+          raw_update: Json
+          update_id: number
+        }
+        Update: {
+          chat_id?: number | null
+          from_user_id?: number | null
+          processed_at?: string
+          raw_update?: Json
+          update_id?: number
+        }
+        Relationships: []
+      }
+      user_interests: {
+        Row: {
+          created_at: string
+          id: string
+          kind: Database["public"]["Enums"]["interest_kind"]
+          profile_id: string
+          tag: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          kind?: Database["public"]["Enums"]["interest_kind"]
+          profile_id: string
+          tag: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          kind?: Database["public"]["Enums"]["interest_kind"]
+          profile_id?: string
+          tag?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "user_interests_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      user_roles: {
+        Row: {
+          created_at: string
+          id: string
+          profile_id: string
+          role: Database["public"]["Enums"]["app_role"]
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          profile_id: string
+          role: Database["public"]["Enums"]["app_role"]
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          profile_id?: string
+          role?: Database["public"]["Enums"]["app_role"]
+        }
+        Relationships: [
+          {
+            foreignKeyName: "user_roles_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
     }
     Views: {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      current_profile_id: { Args: never; Returns: string }
+      find_or_create_profile_by_telegram_id: {
+        Args: {
+          _alias: string
+          _language_code?: string
+          _telegram_chat_id: number
+          _telegram_user_id: number
+          _telegram_username: string
+        }
+        Returns: string
+      }
+      has_role: {
+        Args: {
+          _profile_id: string
+          _role: Database["public"]["Enums"]["app_role"]
+        }
+        Returns: boolean
+      }
+      is_admin: { Args: never; Returns: boolean }
     }
     Enums: {
-      [_ in never]: never
+      app_role: "admin" | "moderator" | "user"
+      conversation_status: "active" | "ended"
+      gender_preference: "male" | "female" | "any"
+      gender_type: "male" | "female" | "other"
+      interest_kind: "preset" | "custom"
+      queue_status: "waiting" | "matched" | "cancelled"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -150,6 +494,13 @@ export type CompositeTypes<
 
 export const Constants = {
   public: {
-    Enums: {},
+    Enums: {
+      app_role: ["admin", "moderator", "user"],
+      conversation_status: ["active", "ended"],
+      gender_preference: ["male", "female", "any"],
+      gender_type: ["male", "female", "other"],
+      interest_kind: ["preset", "custom"],
+      queue_status: ["waiting", "matched", "cancelled"],
+    },
   },
 } as const
