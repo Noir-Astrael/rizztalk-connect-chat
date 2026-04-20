@@ -84,6 +84,13 @@ const T = {
     `• Skip antrean lebih cepat\n` +
     `• Unban instan\n\n` +
     `Pembayaran segera tersedia (Midtrans + transfer manual).`,
+  reportNoChat: `ℹ️ Kamu tidak sedang ngobrol. /report hanya bisa dipakai saat chat aktif.`,
+  reportPrompt: `🚩 Pilih alasan laporan:`,
+  reportSuccess: `✅ Laporan terkirim. Terima kasih sudah bantu jaga komunitas.\nObrolan otomatis diakhiri. Ketik /cari untuk cari yang baru.`,
+  reportAlready: `ℹ️ Kamu sudah pernah melaporkan user ini di obrolan ini.`,
+  blockNoChat: `ℹ️ Kamu tidak sedang ngobrol. /block hanya bisa dipakai saat chat aktif.`,
+  blockSuccess: (alias: string) => `🚫 <b>${alias}</b> diblokir. Kalian tidak akan di-match lagi.\nObrolan diakhiri.`,
+  blockAlready: `ℹ️ User ini sudah ada di daftar block kamu.`,
   promptAlias: `Ketik <b>nama alias</b> kamu (3–20 karakter, akan ditampilkan ke lawan chat):`,
   promptGender: `Pilih <b>gender</b> kamu:`,
   promptProvince: `Ketik <b>nama provinsi</b> kamu (mis. "DKI Jakarta", "Jawa Barat"):`,
