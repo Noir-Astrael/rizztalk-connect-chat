@@ -410,7 +410,7 @@ async function handleStepInput(
 // =========================================================
 // MAIN UPDATE PROCESSOR
 // =========================================================
-async function processUpdate(supabase: ReturnType<typeof getSupabase>, update: TgUpdate) {
+export async function processUpdate(supabase: ReturnType<typeof getSupabase>, update: TgUpdate) {
   const msg = update.message;
   if (!msg || !msg.from || !msg.text) return;
 
