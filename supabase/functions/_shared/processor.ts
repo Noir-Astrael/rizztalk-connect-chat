@@ -36,7 +36,8 @@ type Step =
   | { name: "set_province" }
   | { name: "set_interests" }
   | { name: "set_bio" }
-  | { name: "set_gender_pref" };
+  | { name: "set_gender_pref" }
+  | { name: "await_report_reason"; conversationId: string; reportedId: string };
 const stepByChat = new Map<number, Step>();
 
 export function getSupabase() {
