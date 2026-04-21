@@ -486,7 +486,18 @@ async function handleBlock(supabase: ReturnType<typeof getSupabase>, profile: Pr
 
   await endConversation(supabase, conv, profile.id);
   await removeKeyboard(profile.telegram_chat_id, T.blockSuccess(partner.alias));
-  await sendMessage(partner.telegram_chat_id, T.partnerLeft);
+  await sendMessage(partner.telegram_chat_id, T.blockNotice);
+
+  // Trust feedback: yang di-block kena -3 (sinyal lawan tidak nyaman); pemblokir 0.
+  const blockedDelta = -3;
+  const blockerDelta = 0;
+  const reason = `Sesi diakhiri via /block. Yang di-block −3 sebagai sinyal perilaku.`;
+  const blockerNew = profile.trust_score;
+  const blockedNew = await applyTrustChange(supabase, partner.id, blockedDelta);
+  await sendMessage(profile.telegram_chat_id, T.trustSummary(blockerDelta, blockerNew, reason));
+  if (blockedNew !== null) {
+    await sendMessage(partner.telegram_chat_id, T.trustSummary(blockedDelta, blockedNew, reason));
+  }
 }
 
 async function handleStepInput(
