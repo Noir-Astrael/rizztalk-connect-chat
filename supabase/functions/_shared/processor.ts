@@ -823,15 +823,39 @@ async function handleStepInput(
       reason,
     });
 
+    // Trigger DB handle_new_report sudah turunkan trust −5 & set ban jika perlu.
+    // Ambil state terbaru reported untuk notifikasi spesifik + catat trust event.
+    const reported = await getProfileById(supabase, step.reportedId);
+    const banned = !!reported.is_banned_until && new Date(reported.is_banned_until) > new Date();
+    const banUntil = banned ? new Date(reported.is_banned_until!).toLocaleString("id-ID") : null;
+    const reasonText = `Report terverifikasi (${reason})${banned ? " · auto-ban 24 jam tercapai" : ""}`;
+
+    // Catat sebagai event riwayat untuk yang di-report (delta -5 sudah diaplikasikan trigger,
+    // jadi kita pakai delta=-5 dengan new_score=skor saat ini untuk audit trail).
+    await supabase.from("trust_events").insert({
+      profile_id: reported.id,
+      conversation_id: step.conversationId,
+      event_type: banned ? "ban" : "reported",
+      delta: -5,
+      new_score: reported.trust_score,
+      reason: reasonText,
+    });
+
     const conv = await getActiveConversation(supabase, profile.id);
+    let durationSec = 0;
     if (conv && conv.id === step.conversationId) {
+      durationSec = Math.round((Date.now() - new Date(conv.started_at).getTime()) / 1000);
       await endConversation(supabase, conv, profile.id);
-      const partner = await getProfileById(supabase, step.reportedId);
-      await sendMessage(partner.telegram_chat_id, T.partnerLeft);
     }
 
     stepByChat.set(profile.telegram_chat_id, { name: "idle" });
-    await removeKeyboard(profile.telegram_chat_id, T.reportSuccess);
+
+    // Notifikasi terverifikasi ke kedua pihak (tahan-error)
+    try { await removeKeyboard(profile.telegram_chat_id, T.reportSuccess); }
+    catch (e) { console.error("removeKeyboard failed", e); await safeSend(profile.telegram_chat_id, T.reportSuccess); }
+    await safeSend(profile.telegram_chat_id, T.reportSummaryReporter(profile.trust_score));
+    await safeSend(reported.telegram_chat_id, T.partnerLeft);
+    await safeSend(reported.telegram_chat_id, T.reportSummaryReported(reported.trust_score, banned, banUntil));
     return true;
   }
 
