@@ -601,24 +601,26 @@ async function applyEndTrust(
   supabase: ReturnType<typeof getSupabase>,
   profile: Profile,
   partner: Profile,
+  conversationId: string,
   durationSec: number,
 ) {
   const { ender, partner: partnerDelta } = trustDeltasFromDuration(durationSec);
   const reason = trustReason(durationSec);
+  const durInt = Math.round(durationSec);
 
-  // Selalu kirim ringkasan ke kedua pihak (walau delta = 0) agar transparan.
+  // Catat event + ubah skor (dipakai juga di /me history). Selalu kirim ringkasan ke kedua pihak.
   const enderNew = ender !== 0
-    ? await applyTrustChange(supabase, profile.id, ender)
+    ? await recordTrustEvent(supabase, profile.id, ender, "stop", reason, conversationId, durInt)
     : profile.trust_score;
   const partnerNew = partnerDelta !== 0
-    ? await applyTrustChange(supabase, partner.id, partnerDelta)
+    ? await recordTrustEvent(supabase, partner.id, partnerDelta, "stop", reason, conversationId, durInt)
     : partner.trust_score;
 
   if (enderNew !== null) {
-    await sendMessage(profile.telegram_chat_id, T.trustSummary(ender, enderNew, reason));
+    await safeSend(profile.telegram_chat_id, T.trustSummary(ender, enderNew, reason));
   }
   if (partnerNew !== null) {
-    await sendMessage(partner.telegram_chat_id, T.trustSummary(partnerDelta, partnerNew, reason));
+    await safeSend(partner.telegram_chat_id, T.trustSummary(partnerDelta, partnerNew, reason));
   }
 }
 
@@ -637,9 +639,10 @@ async function handleStop(supabase: ReturnType<typeof getSupabase>, profile: Pro
   const { durationSec } = await endConversation(supabase, conv, profile.id);
   const partnerId = conv.user_a === profile.id ? conv.user_b : conv.user_a;
   const partner = await getProfileById(supabase, partnerId);
-  await sendMessage(profile.telegram_chat_id, T.youLeft);
-  await sendMessage(partner.telegram_chat_id, T.partnerLeft);
-  await applyEndTrust(supabase, profile, partner, durationSec);
+  // Selalu coba kirim ke kedua pihak — safeSend tidak melempar walau salah satu chat_id mati.
+  await safeSend(profile.telegram_chat_id, T.youLeft);
+  await safeSend(partner.telegram_chat_id, T.partnerLeft);
+  await applyEndTrust(supabase, profile, partner, conv.id, durationSec);
 }
 
 async function handleReport(supabase: ReturnType<typeof getSupabase>, profile: Profile) {
