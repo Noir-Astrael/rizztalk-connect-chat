@@ -180,20 +180,70 @@ async function getInterests(supabase: ReturnType<typeof getSupabase>, profileId:
   return (data ?? []).map((r: { tag: string }) => r.tag);
 }
 
-async function applyTrustChange(
+export type TrustEventType = "stop" | "block" | "report" | "reported" | "match_bonus" | "ban" | "manual";
+
+export async function recordTrustEvent(
   supabase: ReturnType<typeof getSupabase>,
   profileId: string,
   delta: number,
+  eventType: TrustEventType,
+  reason: string,
+  conversationId: string | null = null,
+  durationSec: number | null = null,
 ): Promise<number | null> {
-  const { data, error } = await supabase.rpc("apply_trust_score_change", {
+  const { data, error } = await supabase.rpc("record_trust_event", {
     _profile_id: profileId,
     _delta: delta,
+    _event_type: eventType,
+    _reason: reason,
+    _conversation_id: conversationId,
+    _duration_sec: durationSec,
   });
   if (error) {
-    console.error("apply_trust_score_change failed", error);
+    console.error("record_trust_event failed", error);
     return null;
   }
   return data as number;
+}
+
+export function trustLabel(score: number): string {
+  if (score >= 120) return "🌟 Sangat Terpercaya";
+  if (score >= 90) return "✅ Terpercaya";
+  if (score >= 60) return "🙂 Normal";
+  if (score >= 30) return "⚠️ Rendah";
+  return "🚨 Sangat Rendah";
+}
+
+// Filter trust untuk /cari — opsi dipilih user.
+// "Anti-kelaparan" tetap berlaku: filter hanya MEMPERSEMPIT kandidat,
+// tidak mengubah threshold/wait-boost. Setelah waktu tertentu filter di-relax otomatis.
+export type TrustFilter = "any" | "normal" | "trusted" | "very_trusted";
+
+export function parseTrustFilter(text: string | null | undefined): TrustFilter {
+  if (!text) return "any";
+  const t = text.trim().toLowerCase();
+  if (["normal", "biasa"].includes(t)) return "normal";
+  if (["trusted", "terpercaya", "tepercaya"].includes(t)) return "trusted";
+  if (["very_trusted", "sangat_terpercaya", "sangat-terpercaya", "elite", "vt"].includes(t)) return "very_trusted";
+  return "any";
+}
+
+export function trustFilterMin(filter: TrustFilter): number {
+  switch (filter) {
+    case "normal": return 60;
+    case "trusted": return 90;
+    case "very_trusted": return 120;
+    default: return 0;
+  }
+}
+
+export function trustFilterLabel(filter: TrustFilter): string {
+  switch (filter) {
+    case "normal": return "🙂 Normal+ (≥60)";
+    case "trusted": return "✅ Terpercaya+ (≥90)";
+    case "very_trusted": return "🌟 Sangat Terpercaya+ (≥120)";
+    default: return "Semua";
+  }
 }
 
 async function tryMatch(supabase: ReturnType<typeof getSupabase>, profile: Profile) {
