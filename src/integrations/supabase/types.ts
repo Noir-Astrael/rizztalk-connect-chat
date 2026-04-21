@@ -275,6 +275,57 @@ export type Database = {
         }
         Relationships: []
       }
+      trust_events: {
+        Row: {
+          conversation_id: string | null
+          created_at: string
+          delta: number
+          duration_sec: number | null
+          event_type: string
+          id: string
+          new_score: number
+          profile_id: string
+          reason: string
+        }
+        Insert: {
+          conversation_id?: string | null
+          created_at?: string
+          delta: number
+          duration_sec?: number | null
+          event_type: string
+          id?: string
+          new_score: number
+          profile_id: string
+          reason: string
+        }
+        Update: {
+          conversation_id?: string | null
+          created_at?: string
+          delta?: number
+          duration_sec?: number | null
+          event_type?: string
+          id?: string
+          new_score?: number
+          profile_id?: string
+          reason?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "trust_events_conversation_id_fkey"
+            columns: ["conversation_id"]
+            isOneToOne: false
+            referencedRelation: "conversations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "trust_events_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       user_blocks: {
         Row: {
           blocked_id: string
@@ -468,6 +519,17 @@ export type Database = {
         Returns: boolean
       }
       is_admin: { Args: never; Returns: boolean }
+      record_trust_event: {
+        Args: {
+          _conversation_id?: string
+          _delta: number
+          _duration_sec?: number
+          _event_type: string
+          _profile_id: string
+          _reason: string
+        }
+        Returns: number
+      }
     }
     Enums: {
       app_role: "admin" | "moderator" | "user"
