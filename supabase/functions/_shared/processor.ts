@@ -888,7 +888,9 @@ export async function processUpdate(supabase: ReturnType<typeof getSupabase>, up
   }
 
   const text = msg.text.trim();
-  const cmd = text.startsWith("/") ? text.split(/\s+/)[0].split("@")[0].toLowerCase() : null;
+  const parts = text.startsWith("/") ? text.split(/\s+/) : [];
+  const cmd = parts.length > 0 ? parts[0].split("@")[0].toLowerCase() : null;
+  const arg1 = parts[1] ?? null;
 
   if (cmd) {
     stepByChat.set(profile.telegram_chat_id, { name: "idle" });
@@ -899,7 +901,7 @@ export async function processUpdate(supabase: ReturnType<typeof getSupabase>, up
       case "/me": return handleMe(supabase, profile);
       case "/cari":
       case "/find":
-      case "/match": return handleCari(supabase, profile);
+      case "/match": return handleCari(supabase, profile, parseTrustFilter(arg1));
       case "/stop":
       case "/end": return handleStop(supabase, profile);
       case "/report": return handleReport(supabase, profile);
