@@ -119,10 +119,10 @@ const T = {
       `<i>Skor naik kalau chat lebih dari 5 menit tanpa report. Turun kalau /stop &lt;30 detik atau di-report.</i>\n\n` +
       `Ketik /cari untuk mulai ngobrol!`;
   },
-  trustChanged: (delta: number, newScore: number) => {
+  trustSummary: (delta: number, newScore: number, reason: string) => {
     const sign = delta > 0 ? "+" : "";
-    const emoji = delta > 0 ? "📈" : "📉";
-    return `${emoji} Trust score: <b>${sign}${delta}</b> → ${newScore}`;
+    const emoji = delta > 0 ? "📈" : delta < 0 ? "📉" : "➖";
+    return `${emoji} <b>Trust score</b>: ${sign}${delta} → <b>${newScore}</b>\n<i>${reason}</i>`;
   },
   invalidAlias: `❌ Alias harus 3–20 karakter.`,
   invalidProvince: `❌ Provinsi tidak ditemukan. Coba lagi (mis. "Jawa Barat"):`,
