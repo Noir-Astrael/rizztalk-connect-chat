@@ -445,6 +445,10 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      apply_trust_score_change: {
+        Args: { _delta: number; _profile_id: string }
+        Returns: number
+      }
       current_profile_id: { Args: never; Returns: string }
       find_or_create_profile_by_telegram_id: {
         Args: {
