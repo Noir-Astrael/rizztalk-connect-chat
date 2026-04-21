@@ -78,6 +78,23 @@ export async function removeKeyboard(chatId: number, text: string) {
   return sendMessage(chatId, text, { reply_markup: { remove_keyboard: true } });
 }
 
+// Tahan-error: kirim pesan tanpa pernah melempar (mis. user blokir bot, chat_id invalid).
+// Mengembalikan true jika sukses, false jika gagal — dipakai saat notifikasi ke kedua pihak
+// agar kegagalan ke salah satu user tidak mempengaruhi pengiriman ke user lain.
+export async function safeSend(chatId: number | null | undefined, text: string): Promise<boolean> {
+  if (!chatId || !Number.isFinite(Number(chatId))) {
+    console.warn(`safeSend skipped: invalid chat_id=${chatId}`);
+    return false;
+  }
+  try {
+    await sendMessage(Number(chatId), text);
+    return true;
+  } catch (err) {
+    console.error(`safeSend to ${chatId} failed: ${err instanceof Error ? err.message : err}`);
+    return false;
+  }
+}
+
 export async function getUpdates(offset: number, timeout = 50) {
   return tgFetch("/getUpdates", {
     offset,
