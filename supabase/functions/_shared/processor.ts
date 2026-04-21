@@ -350,13 +350,43 @@ async function handleCari(supabase: ReturnType<typeof getSupabase>, profile: Pro
 
 async function endConversation(
   supabase: ReturnType<typeof getSupabase>,
-  conv: { id: string; user_a: string; user_b: string },
+  conv: { id: string; user_a: string; user_b: string; started_at: string },
   enderId: string,
-) {
+): Promise<{ durationSec: number }> {
+  const endedAt = new Date();
   await supabase
     .from("conversations")
-    .update({ status: "ended", ended_at: new Date().toISOString(), ended_by: enderId })
+    .update({ status: "ended", ended_at: endedAt.toISOString(), ended_by: enderId })
     .eq("id", conv.id);
+  const durationSec = (endedAt.getTime() - new Date(conv.started_at).getTime()) / 1000;
+  return { durationSec };
+}
+
+// Aturan trust dinamis berbasis durasi chat:
+// - <30 detik (yang /stop): -3 untuk pemutus (terlalu cepat menyerah/spam-skip)
+// - 30s–5 menit: netral (0)
+// - >=5 menit tanpa report: +3 untuk kedua pihak
+function trustDeltasFromDuration(durationSec: number): { ender: number; partner: number } {
+  if (durationSec < 30) return { ender: -3, partner: 0 };
+  if (durationSec >= 300) return { ender: 3, partner: 3 };
+  return { ender: 0, partner: 0 };
+}
+
+async function applyEndTrust(
+  supabase: ReturnType<typeof getSupabase>,
+  profile: Profile,
+  partner: Profile,
+  durationSec: number,
+) {
+  const { ender, partner: partnerDelta } = trustDeltasFromDuration(durationSec);
+  if (ender !== 0) {
+    const newScore = await applyTrustChange(supabase, profile.id, ender);
+    if (newScore !== null) await sendMessage(profile.telegram_chat_id, T.trustChanged(ender, newScore));
+  }
+  if (partnerDelta !== 0) {
+    const newScore = await applyTrustChange(supabase, partner.id, partnerDelta);
+    if (newScore !== null) await sendMessage(partner.telegram_chat_id, T.trustChanged(partnerDelta, newScore));
+  }
 }
 
 async function handleStop(supabase: ReturnType<typeof getSupabase>, profile: Profile) {
@@ -371,11 +401,12 @@ async function handleStop(supabase: ReturnType<typeof getSupabase>, profile: Pro
     await sendMessage(profile.telegram_chat_id, T.notInChat);
     return;
   }
-  await endConversation(supabase, conv, profile.id);
+  const { durationSec } = await endConversation(supabase, conv, profile.id);
   const partnerId = conv.user_a === profile.id ? conv.user_b : conv.user_a;
   const partner = await getProfileById(supabase, partnerId);
   await sendMessage(profile.telegram_chat_id, T.youLeft);
   await sendMessage(partner.telegram_chat_id, T.partnerLeft);
+  await applyEndTrust(supabase, profile, partner, durationSec);
 }
 
 async function handleReport(supabase: ReturnType<typeof getSupabase>, profile: Profile) {
