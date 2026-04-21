@@ -107,28 +107,32 @@ const T = {
     `Preset: ${PRESET_INTERESTS.slice(0, 12).join(", ")}, …\n\n` +
     (current.length ? `Saat ini: <i>${current.join(", ")}</i>\n\nKetik <code>skip</code> untuk lewati.` : `Ketik <code>skip</code> untuk lewati.`),
   promptBio: `Ketik <b>bio singkat</b> (maks 200 karakter), atau <code>skip</code>:`,
-  profileDone: (p: Profile, interests: string[]) => {
-    const trustLabel =
-      p.trust_score >= 120 ? "🌟 Sangat Terpercaya" :
-      p.trust_score >= 90 ? "✅ Terpercaya" :
-      p.trust_score >= 60 ? "🙂 Normal" :
-      p.trust_score >= 30 ? "⚠️ Rendah" : "🚨 Sangat Rendah";
+  profileDone: (
+    p: Profile,
+    interests: string[],
+    history: TrustEventRow[] = [],
+  ) => {
+    const label = trustLabel(p.trust_score);
     const filled = Math.round((Math.min(150, Math.max(0, p.trust_score)) / 150) * 10);
     const bar = "▰".repeat(filled) + "▱".repeat(10 - filled);
+    const historyBlock = history.length === 0
+      ? `<i>Belum ada riwayat. Mulai chat dengan /cari!</i>`
+      : history.map((h) => T.historyLine(h)).join("\n");
     return `✅ <b>Profil kamu</b>\n\n` +
       `👤 ${p.alias}\n` +
       `⚧ ${p.gender ?? "-"}\n` +
       `📍 ${p.province_name ?? "-"}\n` +
       `🎯 ${interests.length ? interests.join(", ") : "-"}\n` +
       `📝 ${p.bio ?? "-"}\n\n` +
-      `⭐ <b>Trust Score</b>: <b>${p.trust_score}</b> / 150 — ${trustLabel}\n` +
+      `⭐ <b>Trust Score</b>: <b>${p.trust_score}</b> / 150 — ${label}\n` +
       `<code>${bar}</code>\n\n` +
+      `<b>📜 Riwayat trust (5 terakhir):</b>\n${historyBlock}\n\n` +
       `<b>Aturan perubahan skor:</b>\n` +
       `• /stop &lt; 30 detik → <b>−3</b> (pemutus)\n` +
       `• Chat ≥ 5 menit tanpa report → <b>+3</b> (kedua pihak)\n` +
       `• Di-report (terverifikasi) → <b>−5</b>; 5 report dlm 24 jam → ban 24 jam\n` +
       `• Di-block lawan → <b>−3</b>\n` +
-      `<i>Skor &lt; 70 = antrean lebih lambat (butuh match yang lebih cocok). Skor tinggi diprioritaskan.</i>\n\n` +
+      `<i>Skor &lt; 70 = antrean lebih lambat. Filter trust di /cari otomatis dilonggarkan setelah 90 detik.</i>\n\n` +
       `Ketik /cari untuk mulai ngobrol!`;
   },
   trustSummary: (delta: number, newScore: number, reason: string) => {
@@ -136,9 +140,38 @@ const T = {
     const emoji = delta > 0 ? "📈" : delta < 0 ? "📉" : "➖";
     return `${emoji} <b>Trust score</b>: ${sign}${delta} → <b>${newScore}</b>\n<i>${reason}</i>`;
   },
+  reportSummaryReporter: (newScore: number) =>
+    `✅ <b>Laporan terverifikasi & tercatat.</b>\n` +
+    `Skor kamu tetap <b>${newScore}</b>. Terima kasih sudah bantu jaga komunitas.`,
+  reportSummaryReported: (newScore: number, banned: boolean, banUntil: string | null) => {
+    const head = `🚩 <b>Kamu menerima report terverifikasi.</b>\n` +
+      `📉 Trust score: <b>−5</b> → <b>${newScore}</b>`;
+    if (banned && banUntil) {
+      return `${head}\n🚫 <b>Auto-ban 24 jam</b> (5 report dalam 24 jam).\nBerakhir: <b>${banUntil}</b>`;
+    }
+    return `${head}\n<i>Akumulasi 5 report dalam 24 jam akan memicu ban otomatis 24 jam.</i>`;
+  },
+  historyLine: (h: TrustEventRow) => {
+    const sign = h.delta > 0 ? "+" : "";
+    const emoji = h.delta > 0 ? "📈" : h.delta < 0 ? "📉" : "➖";
+    const t = new Date(h.created_at).toLocaleString("id-ID", { dateStyle: "short", timeStyle: "short" });
+    const dur = h.duration_sec != null
+      ? ` · ${Math.floor(h.duration_sec / 60)}m${h.duration_sec % 60}s`
+      : "";
+    return `${emoji} <b>${sign}${h.delta}</b> → ${h.new_score} · <i>${h.event_type}</i>${dur}\n   <code>${t}</code> — ${h.reason}`;
+  },
   invalidAlias: `❌ Alias harus 3–20 karakter.`,
   invalidProvince: `❌ Provinsi tidak ditemukan. Coba lagi (mis. "Jawa Barat"):`,
   premiumOnlyGenderFilter: `⭐ Filter gender hanya untuk Premium. Preferensi diset ke "any".`,
+};
+
+export type TrustEventRow = {
+  delta: number;
+  new_score: number;
+  event_type: string;
+  reason: string;
+  duration_sec: number | null;
+  created_at: string;
 };
 
 async function ensureProfile(supabase: ReturnType<typeof getSupabase>, msg: TgMessage): Promise<Profile> {
