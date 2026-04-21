@@ -1,6 +1,6 @@
 // Shared Telegram update processor — used by both telegram-poll (cron) and telegram-webhook (instant).
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
-import { sendMessage, sendKeyboard, removeKeyboard } from "./telegram.ts";
+import { sendMessage, sendKeyboard, removeKeyboard, safeSend } from "./telegram.ts";
 import { PROVINCES_ID, PRESET_INTERESTS, findProvinceByText } from "./provinces-id.ts";
 
 export type TgUser = { id: number; username?: string; first_name?: string; language_code?: string };
@@ -55,19 +55,23 @@ const T = {
     `<b>Perintah Rizztalk</b>\n\n` +
     `/start — mulai / lihat status\n` +
     `/profile — atur profil (gender, lokasi, minat, bio)\n` +
-    `/cari — cari teman ngobrol baru\n` +
+    `/cari [filter] — cari teman ngobrol baru\n` +
+    `   filter: <code>normal</code> (≥60) · <code>terpercaya</code> (≥90) · <code>sangat_terpercaya</code> (≥120)\n` +
+    `   contoh: <code>/cari terpercaya</code>\n` +
     `/stop — akhiri obrolan saat ini / keluar antrean\n` +
     `/report — laporkan lawan chat (spam/asusila/bot/scam)\n` +
     `/block — blokir lawan chat agar tidak di-match lagi\n` +
-    `/me — lihat profil kamu\n` +
+    `/me — lihat profil & riwayat trust score kamu\n` +
     `/premium — info upgrade premium\n` +
     `/help — bantuan`,
   needOnboarding: `⚠️ Profil kamu belum lengkap. Ketik /profile dulu.`,
   bannedUntil: (until: string) => `🚫 Akun kamu sedang di-ban sampai <b>${until}</b>. Ketik /premium untuk info unban.`,
-  searching: (sameProv: boolean, provName: string | null) =>
-    sameProv
+  searching: (sameProv: boolean, provName: string | null, filter: TrustFilter = "any") => {
+    const base = sameProv
       ? `🔎 Mencari teman ngobrol dari <b>${provName}</b>…`
-      : `🔎 Mencari teman ngobrol…`,
+      : `🔎 Mencari teman ngobrol…`;
+    return filter === "any" ? base : `${base}\n<i>Filter trust: ${trustFilterLabel(filter)} (otomatis dilonggarkan jika menunggu lama).</i>`;
+  },
   inQueue: `⏳ Kamu sudah di antrean. Tunggu sebentar…`,
   alreadyChatting: `💬 Kamu sedang dalam obrolan. Ketik /stop untuk mengakhiri.`,
   matchFound: (alias: string, provName: string, sameProv: boolean) => {
@@ -103,28 +107,32 @@ const T = {
     `Preset: ${PRESET_INTERESTS.slice(0, 12).join(", ")}, …\n\n` +
     (current.length ? `Saat ini: <i>${current.join(", ")}</i>\n\nKetik <code>skip</code> untuk lewati.` : `Ketik <code>skip</code> untuk lewati.`),
   promptBio: `Ketik <b>bio singkat</b> (maks 200 karakter), atau <code>skip</code>:`,
-  profileDone: (p: Profile, interests: string[]) => {
-    const trustLabel =
-      p.trust_score >= 120 ? "🌟 Sangat Terpercaya" :
-      p.trust_score >= 90 ? "✅ Terpercaya" :
-      p.trust_score >= 60 ? "🙂 Normal" :
-      p.trust_score >= 30 ? "⚠️ Rendah" : "🚨 Sangat Rendah";
+  profileDone: (
+    p: Profile,
+    interests: string[],
+    history: TrustEventRow[] = [],
+  ) => {
+    const label = trustLabel(p.trust_score);
     const filled = Math.round((Math.min(150, Math.max(0, p.trust_score)) / 150) * 10);
     const bar = "▰".repeat(filled) + "▱".repeat(10 - filled);
+    const historyBlock = history.length === 0
+      ? `<i>Belum ada riwayat. Mulai chat dengan /cari!</i>`
+      : history.map((h) => T.historyLine(h)).join("\n");
     return `✅ <b>Profil kamu</b>\n\n` +
       `👤 ${p.alias}\n` +
       `⚧ ${p.gender ?? "-"}\n` +
       `📍 ${p.province_name ?? "-"}\n` +
       `🎯 ${interests.length ? interests.join(", ") : "-"}\n` +
       `📝 ${p.bio ?? "-"}\n\n` +
-      `⭐ <b>Trust Score</b>: <b>${p.trust_score}</b> / 150 — ${trustLabel}\n` +
+      `⭐ <b>Trust Score</b>: <b>${p.trust_score}</b> / 150 — ${label}\n` +
       `<code>${bar}</code>\n\n` +
+      `<b>📜 Riwayat trust (5 terakhir):</b>\n${historyBlock}\n\n` +
       `<b>Aturan perubahan skor:</b>\n` +
       `• /stop &lt; 30 detik → <b>−3</b> (pemutus)\n` +
       `• Chat ≥ 5 menit tanpa report → <b>+3</b> (kedua pihak)\n` +
       `• Di-report (terverifikasi) → <b>−5</b>; 5 report dlm 24 jam → ban 24 jam\n` +
       `• Di-block lawan → <b>−3</b>\n` +
-      `<i>Skor &lt; 70 = antrean lebih lambat (butuh match yang lebih cocok). Skor tinggi diprioritaskan.</i>\n\n` +
+      `<i>Skor &lt; 70 = antrean lebih lambat. Filter trust di /cari otomatis dilonggarkan setelah 90 detik.</i>\n\n` +
       `Ketik /cari untuk mulai ngobrol!`;
   },
   trustSummary: (delta: number, newScore: number, reason: string) => {
@@ -132,9 +140,38 @@ const T = {
     const emoji = delta > 0 ? "📈" : delta < 0 ? "📉" : "➖";
     return `${emoji} <b>Trust score</b>: ${sign}${delta} → <b>${newScore}</b>\n<i>${reason}</i>`;
   },
+  reportSummaryReporter: (newScore: number) =>
+    `✅ <b>Laporan terverifikasi & tercatat.</b>\n` +
+    `Skor kamu tetap <b>${newScore}</b>. Terima kasih sudah bantu jaga komunitas.`,
+  reportSummaryReported: (newScore: number, banned: boolean, banUntil: string | null) => {
+    const head = `🚩 <b>Kamu menerima report terverifikasi.</b>\n` +
+      `📉 Trust score: <b>−5</b> → <b>${newScore}</b>`;
+    if (banned && banUntil) {
+      return `${head}\n🚫 <b>Auto-ban 24 jam</b> (5 report dalam 24 jam).\nBerakhir: <b>${banUntil}</b>`;
+    }
+    return `${head}\n<i>Akumulasi 5 report dalam 24 jam akan memicu ban otomatis 24 jam.</i>`;
+  },
+  historyLine: (h: TrustEventRow) => {
+    const sign = h.delta > 0 ? "+" : "";
+    const emoji = h.delta > 0 ? "📈" : h.delta < 0 ? "📉" : "➖";
+    const t = new Date(h.created_at).toLocaleString("id-ID", { dateStyle: "short", timeStyle: "short" });
+    const dur = h.duration_sec != null
+      ? ` · ${Math.floor(h.duration_sec / 60)}m${h.duration_sec % 60}s`
+      : "";
+    return `${emoji} <b>${sign}${h.delta}</b> → ${h.new_score} · <i>${h.event_type}</i>${dur}\n   <code>${t}</code> — ${h.reason}`;
+  },
   invalidAlias: `❌ Alias harus 3–20 karakter.`,
   invalidProvince: `❌ Provinsi tidak ditemukan. Coba lagi (mis. "Jawa Barat"):`,
   premiumOnlyGenderFilter: `⭐ Filter gender hanya untuk Premium. Preferensi diset ke "any".`,
+};
+
+export type TrustEventRow = {
+  delta: number;
+  new_score: number;
+  event_type: string;
+  reason: string;
+  duration_sec: number | null;
+  created_at: string;
 };
 
 async function ensureProfile(supabase: ReturnType<typeof getSupabase>, msg: TgMessage): Promise<Profile> {
@@ -180,26 +217,171 @@ async function getInterests(supabase: ReturnType<typeof getSupabase>, profileId:
   return (data ?? []).map((r: { tag: string }) => r.tag);
 }
 
-async function applyTrustChange(
+export type TrustEventType = "stop" | "block" | "report" | "reported" | "match_bonus" | "ban" | "manual";
+
+export async function recordTrustEvent(
   supabase: ReturnType<typeof getSupabase>,
   profileId: string,
   delta: number,
+  eventType: TrustEventType,
+  reason: string,
+  conversationId: string | null = null,
+  durationSec: number | null = null,
 ): Promise<number | null> {
-  const { data, error } = await supabase.rpc("apply_trust_score_change", {
+  const { data, error } = await supabase.rpc("record_trust_event", {
     _profile_id: profileId,
     _delta: delta,
+    _event_type: eventType,
+    _reason: reason,
+    _conversation_id: conversationId,
+    _duration_sec: durationSec,
   });
   if (error) {
-    console.error("apply_trust_score_change failed", error);
+    console.error("record_trust_event failed", error);
     return null;
   }
   return data as number;
 }
 
-async function tryMatch(supabase: ReturnType<typeof getSupabase>, profile: Profile) {
+export function trustLabel(score: number): string {
+  if (score >= 120) return "🌟 Sangat Terpercaya";
+  if (score >= 90) return "✅ Terpercaya";
+  if (score >= 60) return "🙂 Normal";
+  if (score >= 30) return "⚠️ Rendah";
+  return "🚨 Sangat Rendah";
+}
+
+// Filter trust untuk /cari — opsi dipilih user.
+// "Anti-kelaparan" tetap berlaku: filter hanya MEMPERSEMPIT kandidat,
+// tidak mengubah threshold/wait-boost. Setelah waktu tertentu filter di-relax otomatis.
+export type TrustFilter = "any" | "normal" | "trusted" | "very_trusted";
+
+export function parseTrustFilter(text: string | null | undefined): TrustFilter {
+  if (!text) return "any";
+  const t = text.trim().toLowerCase();
+  if (["normal", "biasa"].includes(t)) return "normal";
+  if (["trusted", "terpercaya", "tepercaya"].includes(t)) return "trusted";
+  if (["very_trusted", "sangat_terpercaya", "sangat-terpercaya", "elite", "vt"].includes(t)) return "very_trusted";
+  return "any";
+}
+
+export function trustFilterMin(filter: TrustFilter): number {
+  switch (filter) {
+    case "normal": return 60;
+    case "trusted": return 90;
+    case "very_trusted": return 120;
+    default: return 0;
+  }
+}
+
+export function trustFilterLabel(filter: TrustFilter): string {
+  switch (filter) {
+    case "normal": return "🙂 Normal+ (≥60)";
+    case "trusted": return "✅ Terpercaya+ (≥90)";
+    case "very_trusted": return "🌟 Sangat Terpercaya+ (≥120)";
+    default: return "Semua";
+  }
+}
+
+// ---------- Pure matching algorithm (exported untuk testing) ----------
+
+export type QueueEntry = {
+  profile_id: string;
+  province_code: string | null;
+  gender: "male" | "female" | "other" | null;
+  gender_preference: "male" | "female" | "any";
+  is_premium: boolean;
+  joined_at: string;
+};
+
+export type MatchInputs = {
+  requester: {
+    id: string;
+    province_code: string | null;
+    gender: "male" | "female" | "other" | null;
+    gender_preference: "male" | "female" | "any";
+    is_premium: boolean;
+    trust_score: number;
+    joined_at: string;
+    interests: Set<string>;
+  };
+  candidates: QueueEntry[];
+  trustById: Map<string, number>;
+  interestsById: Map<string, string[]>;
+  blockedSet: Set<string>;
+  trustFilter: TrustFilter;
+  nowMs: number;
+};
+
+export type Scored = { entry: QueueEntry; score: number; theirTrust: number };
+
+const TRUST_BONUS = (t: number) =>
+  Math.max(-5, Math.min(5, Math.floor((t - 70) / 20)));
+
+// Anti-kelaparan untuk filter trust: setelah 90 detik antrean,
+// minimum trust kandidat diturunkan bertahap (relaxed) sampai 0.
+function effectiveTrustMin(filter: TrustFilter, waitSec: number): number {
+  const base = trustFilterMin(filter);
+  if (base === 0) return 0;
+  const relaxedSteps = Math.floor(Math.max(0, waitSec - 90) / 60); // tiap 60s setelah 90s
+  return Math.max(0, base - relaxedSteps * 30);
+}
+
+export function scoreCandidates(input: MatchInputs): Scored | null {
+  const { requester, candidates, trustById, interestsById, blockedSet, trustFilter, nowMs } = input;
+  const myPref = requester.is_premium ? requester.gender_preference : "any";
+  const myTrustBonus = TRUST_BONUS(requester.trust_score);
+  const myWaitSec = (nowMs - new Date(requester.joined_at).getTime()) / 1000;
+  const myWaitBoost = Math.floor(myWaitSec / 30);
+  const trustMin = effectiveTrustMin(trustFilter, myWaitSec);
+
+  const scored: Scored[] = [];
+  for (const c of candidates) {
+    if (blockedSet.has(c.profile_id)) continue;
+    if (myPref !== "any" && c.gender && c.gender !== myPref) continue;
+    if (c.is_premium && c.gender_preference !== "any" && requester.gender && c.gender_preference !== requester.gender) continue;
+
+    const theirTrust = trustById.get(c.profile_id) ?? 100;
+    if (theirTrust < trustMin) continue;
+
+    let score = 0;
+    if (requester.province_code && c.province_code === requester.province_code) score += 3;
+    if (myPref !== "any" && c.gender === myPref) score += 2;
+    const theirInterests = interestsById.get(c.profile_id) ?? [];
+    const overlap = theirInterests.filter((t) => requester.interests.has(t)).length;
+    score += overlap;
+
+    score += Math.floor((TRUST_BONUS(theirTrust) + myTrustBonus) / 2);
+
+    const candWaitSec = (nowMs - new Date(c.joined_at).getTime()) / 1000;
+    score += Math.floor(candWaitSec / 30);
+
+    scored.push({ entry: c, score, theirTrust });
+  }
+
+  if (scored.length === 0) return null;
+  scored.sort((a, b) =>
+    b.score - a.score ||
+    new Date(a.entry.joined_at).getTime() - new Date(b.entry.joined_at).getTime()
+  );
+  const best = scored[0];
+
+  // Threshold dinamis untuk requester low-trust, di-relax oleh wait.
+  const baseThreshold = requester.trust_score >= 70 ? 0 : Math.ceil((70 - requester.trust_score) / 15);
+  const effectiveThreshold = Math.max(0, baseThreshold - myWaitBoost);
+  if (best.score < effectiveThreshold) return null;
+  return best;
+}
+
+// ---------- DB-backed wrapper ----------
+
+async function tryMatch(
+  supabase: ReturnType<typeof getSupabase>,
+  profile: Profile,
+  trustFilter: TrustFilter = "any",
+) {
   const now = Date.now();
 
-  // Upsert requester ke antrean. Pertahankan joined_at lama jika sudah ada (penting untuk anti-starvation).
   const { data: existingQ } = await supabase
     .from("match_queue")
     .select("joined_at")
@@ -222,7 +404,7 @@ async function tryMatch(supabase: ReturnType<typeof getSupabase>, profile: Profi
 
   const { data: candidates } = await supabase
     .from("match_queue")
-    .select("*")
+    .select("profile_id, province_code, gender, gender_preference, is_premium, joined_at")
     .eq("status", "waiting")
     .neq("profile_id", profile.id)
     .order("joined_at", { ascending: true })
@@ -230,7 +412,6 @@ async function tryMatch(supabase: ReturnType<typeof getSupabase>, profile: Profi
 
   if (!candidates || candidates.length === 0) return null;
 
-  // Ambil daftar block dua arah
   const { data: blocks } = await supabase
     .from("user_blocks")
     .select("blocker_id, blocked_id")
@@ -241,9 +422,7 @@ async function tryMatch(supabase: ReturnType<typeof getSupabase>, profile: Profi
   }
 
   const myInterests = new Set(await getInterests(supabase, profile.id));
-  const myPref = profile.is_premium ? profile.gender_preference : "any";
 
-  // Pra-ambil trust kandidat (dipakai konsisten di scoring + threshold)
   const candidateIds = candidates.map((c) => c.profile_id);
   const { data: candidateProfiles } = await supabase
     .from("profiles")
@@ -253,55 +432,37 @@ async function tryMatch(supabase: ReturnType<typeof getSupabase>, profile: Profi
     (candidateProfiles ?? []).map((p: { id: string; trust_score: number }) => [p.id, p.trust_score]),
   );
 
-  // Trust scoring konsisten — fungsi tunggal dipakai untuk requester & kandidat.
-  // Range trust 0..150; pivot di 70 (cukup terpercaya). Hasil ~ -3..+4.
-  const trustBonus = (t: number) => Math.max(-5, Math.min(5, Math.floor((t - 70) / 20)));
-  const myTrustBonus = trustBonus(profile.trust_score);
-
-  // Anti-starvation untuk requester sendiri: makin lama menunggu, makin "ditinggikan"
-  // ekspektasinya — sehingga match marjinal pun diterima setelah cukup lama.
-  const myWaitSec = (now - new Date(myJoinedAt).getTime()) / 1000;
-  const myWaitBoost = Math.floor(myWaitSec / 30); // +1 tiap 30 detik antrean
-
-  type Scored = { entry: typeof candidates[number]; score: number; theirTrust: number };
-  const scored: Scored[] = [];
-
-  for (const c of candidates) {
-    if (blockedSet.has(c.profile_id)) continue;
-    if (myPref !== "any" && c.gender && c.gender !== myPref) continue;
-    if (c.is_premium && c.gender_preference !== "any" && profile.gender && c.gender_preference !== profile.gender) continue;
-
-    let score = 0;
-    if (profile.province_code && c.province_code === profile.province_code) score += 3;
-    if (myPref !== "any" && c.gender === myPref) score += 2;
-    const theirInterests = await getInterests(supabase, c.profile_id);
-    const overlap = theirInterests.filter((t) => myInterests.has(t)).length;
-    score += overlap;
-
-    const theirTrust = trustById.get(c.profile_id) ?? 100;
-
-    // Trust dipakai bersama: kontribusi gabungan kandidat + requester (rata-rata).
-    // Ini menjaga aturan prioritas tetap konsisten — tidak ada pihak yang "diabaikan".
-    score += Math.floor((trustBonus(theirTrust) + myTrustBonus) / 2);
-
-    // Bonus waktu tunggu kandidat (anti-starvation untuk pihak lain)
-    const candWaitSec = (now - new Date(c.joined_at).getTime()) / 1000;
-    score += Math.floor(candWaitSec / 30);
-
-    scored.push({ entry: c, score, theirTrust });
+  const { data: interestRows } = await supabase
+    .from("user_interests")
+    .select("profile_id, tag")
+    .in("profile_id", candidateIds);
+  const interestsById = new Map<string, string[]>();
+  for (const row of interestRows ?? []) {
+    const arr = interestsById.get(row.profile_id) ?? [];
+    arr.push(row.tag);
+    interestsById.set(row.profile_id, arr);
   }
 
-  if (scored.length === 0) return null;
-  scored.sort((a, b) => b.score - a.score || new Date(a.entry.joined_at).getTime() - new Date(b.entry.joined_at).getTime());
-  const best = scored[0];
+  const best = scoreCandidates({
+    requester: {
+      id: profile.id,
+      province_code: profile.province_code,
+      gender: profile.gender,
+      gender_preference: profile.gender_preference,
+      is_premium: profile.is_premium,
+      trust_score: profile.trust_score,
+      joined_at: myJoinedAt,
+      interests: myInterests,
+    },
+    candidates: candidates as QueueEntry[],
+    trustById,
+    interestsById,
+    blockedSet,
+    trustFilter,
+    nowMs: now,
+  });
 
-  // Threshold dinamis: requester low-trust harus menunggu match yang cukup baik,
-  // TAPI batasnya menurun seiring waktu tunggu (anti-kelaparan).
-  // - trust >= 70: terima apapun (threshold 0)
-  // - trust < 70: butuh skor minimum, dikurangi waitBoost.
-  const baseThreshold = profile.trust_score >= 70 ? 0 : Math.ceil((70 - profile.trust_score) / 15);
-  const effectiveThreshold = Math.max(0, baseThreshold - myWaitBoost);
-  if (best.score < effectiveThreshold) return null;
+  if (!best) return null;
 
   const partner = await getProfileById(supabase, best.entry.profile_id);
   const sameProvince = !!profile.province_code && profile.province_code === partner.province_code;
@@ -337,9 +498,30 @@ async function handleProfileStart(profile: Profile) {
   await sendMessage(profile.telegram_chat_id, T.promptAlias);
 }
 
+async function fetchTrustHistory(
+  supabase: ReturnType<typeof getSupabase>,
+  profileId: string,
+  limit = 5,
+): Promise<TrustEventRow[]> {
+  const { data, error } = await supabase
+    .from("trust_events")
+    .select("delta, new_score, event_type, reason, duration_sec, created_at")
+    .eq("profile_id", profileId)
+    .order("created_at", { ascending: false })
+    .limit(limit);
+  if (error) {
+    console.error("fetchTrustHistory failed", error);
+    return [];
+  }
+  return (data ?? []) as TrustEventRow[];
+}
+
 async function handleMe(supabase: ReturnType<typeof getSupabase>, profile: Profile) {
-  const interests = await getInterests(supabase, profile.id);
-  await sendMessage(profile.telegram_chat_id, T.profileDone(profile, interests));
+  const [interests, history] = await Promise.all([
+    getInterests(supabase, profile.id),
+    fetchTrustHistory(supabase, profile.id, 5),
+  ]);
+  await safeSend(profile.telegram_chat_id, T.profileDone(profile, interests, history));
 }
 
 async function handleHelp(profile: Profile) {
@@ -350,7 +532,11 @@ async function handlePremium(profile: Profile) {
   await sendMessage(profile.telegram_chat_id, T.premium);
 }
 
-async function handleCari(supabase: ReturnType<typeof getSupabase>, profile: Profile) {
+async function handleCari(
+  supabase: ReturnType<typeof getSupabase>,
+  profile: Profile,
+  trustFilter: TrustFilter = "any",
+) {
   if (profile.is_banned_until && new Date(profile.is_banned_until) > new Date()) {
     await sendMessage(profile.telegram_chat_id, T.bannedUntil(new Date(profile.is_banned_until).toLocaleString("id-ID")));
     return;
@@ -364,18 +550,19 @@ async function handleCari(supabase: ReturnType<typeof getSupabase>, profile: Pro
     await sendMessage(profile.telegram_chat_id, T.alreadyChatting);
     return;
   }
-  await sendMessage(profile.telegram_chat_id, T.searching(true, profile.province_name));
+  await sendMessage(profile.telegram_chat_id, T.searching(true, profile.province_name, trustFilter));
 
-  const result = await tryMatch(supabase, profile);
+  const result = await tryMatch(supabase, profile, trustFilter);
   if (!result) {
     await sendMessage(profile.telegram_chat_id, T.inQueue);
     return;
   }
 
   const { partner, sameProvince } = result;
-  await sendMessage(profile.telegram_chat_id, T.matchFound(partner.alias, partner.province_name ?? "-", sameProvince));
-  await sendMessage(partner.telegram_chat_id, T.matchFound(profile.alias, profile.province_name ?? "-", sameProvince));
+  await safeSend(profile.telegram_chat_id, T.matchFound(partner.alias, partner.province_name ?? "-", sameProvince));
+  await safeSend(partner.telegram_chat_id, T.matchFound(profile.alias, profile.province_name ?? "-", sameProvince));
 }
+
 
 async function endConversation(
   supabase: ReturnType<typeof getSupabase>,
@@ -414,24 +601,26 @@ async function applyEndTrust(
   supabase: ReturnType<typeof getSupabase>,
   profile: Profile,
   partner: Profile,
+  conversationId: string,
   durationSec: number,
 ) {
   const { ender, partner: partnerDelta } = trustDeltasFromDuration(durationSec);
   const reason = trustReason(durationSec);
+  const durInt = Math.round(durationSec);
 
-  // Selalu kirim ringkasan ke kedua pihak (walau delta = 0) agar transparan.
+  // Catat event + ubah skor (dipakai juga di /me history). Selalu kirim ringkasan ke kedua pihak.
   const enderNew = ender !== 0
-    ? await applyTrustChange(supabase, profile.id, ender)
+    ? await recordTrustEvent(supabase, profile.id, ender, "stop", reason, conversationId, durInt)
     : profile.trust_score;
   const partnerNew = partnerDelta !== 0
-    ? await applyTrustChange(supabase, partner.id, partnerDelta)
+    ? await recordTrustEvent(supabase, partner.id, partnerDelta, "stop", reason, conversationId, durInt)
     : partner.trust_score;
 
   if (enderNew !== null) {
-    await sendMessage(profile.telegram_chat_id, T.trustSummary(ender, enderNew, reason));
+    await safeSend(profile.telegram_chat_id, T.trustSummary(ender, enderNew, reason));
   }
   if (partnerNew !== null) {
-    await sendMessage(partner.telegram_chat_id, T.trustSummary(partnerDelta, partnerNew, reason));
+    await safeSend(partner.telegram_chat_id, T.trustSummary(partnerDelta, partnerNew, reason));
   }
 }
 
@@ -450,9 +639,10 @@ async function handleStop(supabase: ReturnType<typeof getSupabase>, profile: Pro
   const { durationSec } = await endConversation(supabase, conv, profile.id);
   const partnerId = conv.user_a === profile.id ? conv.user_b : conv.user_a;
   const partner = await getProfileById(supabase, partnerId);
-  await sendMessage(profile.telegram_chat_id, T.youLeft);
-  await sendMessage(partner.telegram_chat_id, T.partnerLeft);
-  await applyEndTrust(supabase, profile, partner, durationSec);
+  // Selalu coba kirim ke kedua pihak — safeSend tidak melempar walau salah satu chat_id mati.
+  await safeSend(profile.telegram_chat_id, T.youLeft);
+  await safeSend(partner.telegram_chat_id, T.partnerLeft);
+  await applyEndTrust(supabase, profile, partner, conv.id, durationSec);
 }
 
 async function handleReport(supabase: ReturnType<typeof getSupabase>, profile: Profile) {
@@ -487,25 +677,29 @@ async function handleBlock(supabase: ReturnType<typeof getSupabase>, profile: Pr
     blocked_id: blockedId,
   });
   if (error?.message.includes("duplicate")) {
-    await sendMessage(profile.telegram_chat_id, T.blockAlready);
+    await safeSend(profile.telegram_chat_id, T.blockAlready);
   } else if (error) {
     console.error("block insert failed", error);
   }
 
+  const durationSec = Math.round((Date.now() - new Date(conv.started_at).getTime()) / 1000);
   await endConversation(supabase, conv, profile.id);
-  await removeKeyboard(profile.telegram_chat_id, T.blockSuccess(partner.alias));
-  await sendMessage(partner.telegram_chat_id, T.blockNotice);
 
-  // Trust feedback: yang di-block kena -3 (sinyal lawan tidak nyaman); pemblokir 0.
+  try { await removeKeyboard(profile.telegram_chat_id, T.blockSuccess(partner.alias)); }
+  catch (e) { console.error("removeKeyboard failed", e); await safeSend(profile.telegram_chat_id, T.blockSuccess(partner.alias)); }
+  await safeSend(partner.telegram_chat_id, T.blockNotice);
+
   const blockedDelta = -3;
   const blockerDelta = 0;
-  const reason = `Sesi diakhiri via /block. Yang di-block −3 sebagai sinyal perilaku.`;
-  const blockerNew = profile.trust_score;
-  const blockedNew = await applyTrustChange(supabase, partner.id, blockedDelta);
-  await sendMessage(profile.telegram_chat_id, T.trustSummary(blockerDelta, blockerNew, reason));
-  if (blockedNew !== null) {
-    await sendMessage(partner.telegram_chat_id, T.trustSummary(blockedDelta, blockedNew, reason));
-  }
+  const reason = `Sesi diakhiri via /block (${Math.floor(durationSec / 60)}m${durationSec % 60}s). Yang di-block −3.`;
+
+  const blockerNew = blockerDelta !== 0
+    ? await recordTrustEvent(supabase, profile.id, blockerDelta, "block", reason, conv.id, durationSec)
+    : profile.trust_score;
+  const blockedNew = await recordTrustEvent(supabase, partner.id, blockedDelta, "block", reason, conv.id, durationSec);
+
+  if (blockerNew !== null) await safeSend(profile.telegram_chat_id, T.trustSummary(blockerDelta, blockerNew, reason));
+  if (blockedNew !== null) await safeSend(partner.telegram_chat_id, T.trustSummary(blockedDelta, blockedNew, reason));
 }
 
 async function handleStepInput(
@@ -629,15 +823,39 @@ async function handleStepInput(
       reason,
     });
 
+    // Trigger DB handle_new_report sudah turunkan trust −5 & set ban jika perlu.
+    // Ambil state terbaru reported untuk notifikasi spesifik + catat trust event.
+    const reported = await getProfileById(supabase, step.reportedId);
+    const banned = !!reported.is_banned_until && new Date(reported.is_banned_until) > new Date();
+    const banUntil = banned ? new Date(reported.is_banned_until!).toLocaleString("id-ID") : null;
+    const reasonText = `Report terverifikasi (${reason})${banned ? " · auto-ban 24 jam tercapai" : ""}`;
+
+    // Catat sebagai event riwayat untuk yang di-report (delta -5 sudah diaplikasikan trigger,
+    // jadi kita pakai delta=-5 dengan new_score=skor saat ini untuk audit trail).
+    await supabase.from("trust_events").insert({
+      profile_id: reported.id,
+      conversation_id: step.conversationId,
+      event_type: banned ? "ban" : "reported",
+      delta: -5,
+      new_score: reported.trust_score,
+      reason: reasonText,
+    });
+
     const conv = await getActiveConversation(supabase, profile.id);
+    let durationSec = 0;
     if (conv && conv.id === step.conversationId) {
+      durationSec = Math.round((Date.now() - new Date(conv.started_at).getTime()) / 1000);
       await endConversation(supabase, conv, profile.id);
-      const partner = await getProfileById(supabase, step.reportedId);
-      await sendMessage(partner.telegram_chat_id, T.partnerLeft);
     }
 
     stepByChat.set(profile.telegram_chat_id, { name: "idle" });
-    await removeKeyboard(profile.telegram_chat_id, T.reportSuccess);
+
+    // Notifikasi terverifikasi ke kedua pihak (tahan-error)
+    try { await removeKeyboard(profile.telegram_chat_id, T.reportSuccess); }
+    catch (e) { console.error("removeKeyboard failed", e); await safeSend(profile.telegram_chat_id, T.reportSuccess); }
+    await safeSend(profile.telegram_chat_id, T.reportSummaryReporter(profile.trust_score));
+    await safeSend(reported.telegram_chat_id, T.partnerLeft);
+    await safeSend(reported.telegram_chat_id, T.reportSummaryReported(reported.trust_score, banned, banUntil));
     return true;
   }
 
@@ -670,7 +888,9 @@ export async function processUpdate(supabase: ReturnType<typeof getSupabase>, up
   }
 
   const text = msg.text.trim();
-  const cmd = text.startsWith("/") ? text.split(/\s+/)[0].split("@")[0].toLowerCase() : null;
+  const parts = text.startsWith("/") ? text.split(/\s+/) : [];
+  const cmd = parts.length > 0 ? parts[0].split("@")[0].toLowerCase() : null;
+  const arg1 = parts[1] ?? null;
 
   if (cmd) {
     stepByChat.set(profile.telegram_chat_id, { name: "idle" });
@@ -681,7 +901,7 @@ export async function processUpdate(supabase: ReturnType<typeof getSupabase>, up
       case "/me": return handleMe(supabase, profile);
       case "/cari":
       case "/find":
-      case "/match": return handleCari(supabase, profile);
+      case "/match": return handleCari(supabase, profile, parseTrustFilter(arg1));
       case "/stop":
       case "/end": return handleStop(supabase, profile);
       case "/report": return handleReport(supabase, profile);
