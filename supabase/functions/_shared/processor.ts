@@ -1,6 +1,6 @@
 // Shared Telegram update processor — used by both telegram-poll (cron) and telegram-webhook (instant).
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
-import { sendMessage, sendKeyboard, removeKeyboard } from "./telegram.ts";
+import { sendMessage, sendKeyboard, removeKeyboard, safeSend } from "./telegram.ts";
 import { PROVINCES_ID, PRESET_INTERESTS, findProvinceByText } from "./provinces-id.ts";
 
 export type TgUser = { id: number; username?: string; first_name?: string; language_code?: string };
