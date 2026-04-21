@@ -66,10 +66,12 @@ const T = {
     `/help — bantuan`,
   needOnboarding: `⚠️ Profil kamu belum lengkap. Ketik /profile dulu.`,
   bannedUntil: (until: string) => `🚫 Akun kamu sedang di-ban sampai <b>${until}</b>. Ketik /premium untuk info unban.`,
-  searching: (sameProv: boolean, provName: string | null) =>
-    sameProv
+  searching: (sameProv: boolean, provName: string | null, filter: TrustFilter = "any") => {
+    const base = sameProv
       ? `🔎 Mencari teman ngobrol dari <b>${provName}</b>…`
-      : `🔎 Mencari teman ngobrol…`,
+      : `🔎 Mencari teman ngobrol…`;
+    return filter === "any" ? base : `${base}\n<i>Filter trust: ${trustFilterLabel(filter)} (otomatis dilonggarkan jika menunggu lama).</i>`;
+  },
   inQueue: `⏳ Kamu sudah di antrean. Tunggu sebentar…`,
   alreadyChatting: `💬 Kamu sedang dalam obrolan. Ketik /stop untuk mengakhiri.`,
   matchFound: (alias: string, provName: string, sameProv: boolean) => {
