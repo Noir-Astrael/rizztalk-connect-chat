@@ -102,15 +102,27 @@ const T = {
     `Preset: ${PRESET_INTERESTS.slice(0, 12).join(", ")}, …\n\n` +
     (current.length ? `Saat ini: <i>${current.join(", ")}</i>\n\nKetik <code>skip</code> untuk lewati.` : `Ketik <code>skip</code> untuk lewati.`),
   promptBio: `Ketik <b>bio singkat</b> (maks 200 karakter), atau <code>skip</code>:`,
-  profileDone: (p: Profile, interests: string[]) =>
-    `✅ <b>Profil kamu</b>\n\n` +
-    `👤 ${p.alias}\n` +
-    `⚧ ${p.gender ?? "-"}\n` +
-    `📍 ${p.province_name ?? "-"}\n` +
-    `🎯 ${interests.length ? interests.join(", ") : "-"}\n` +
-    `📝 ${p.bio ?? "-"}\n` +
-    `⭐ Trust: ${p.trust_score}\n\n` +
-    `Ketik /cari untuk mulai ngobrol!`,
+  profileDone: (p: Profile, interests: string[]) => {
+    const trustLabel =
+      p.trust_score >= 120 ? "🌟 Sangat Terpercaya" :
+      p.trust_score >= 90 ? "✅ Terpercaya" :
+      p.trust_score >= 60 ? "🙂 Normal" :
+      p.trust_score >= 30 ? "⚠️ Rendah" : "🚨 Sangat Rendah";
+    return `✅ <b>Profil kamu</b>\n\n` +
+      `👤 ${p.alias}\n` +
+      `⚧ ${p.gender ?? "-"}\n` +
+      `📍 ${p.province_name ?? "-"}\n` +
+      `🎯 ${interests.length ? interests.join(", ") : "-"}\n` +
+      `📝 ${p.bio ?? "-"}\n` +
+      `⭐ Trust Score: <b>${p.trust_score}</b> — ${trustLabel}\n` +
+      `<i>Skor naik kalau chat lebih dari 5 menit tanpa report. Turun kalau /stop &lt;30 detik atau di-report.</i>\n\n` +
+      `Ketik /cari untuk mulai ngobrol!`;
+  },
+  trustChanged: (delta: number, newScore: number) => {
+    const sign = delta > 0 ? "+" : "";
+    const emoji = delta > 0 ? "📈" : "📉";
+    return `${emoji} Trust score: <b>${sign}${delta}</b> → ${newScore}`;
+  },
   invalidAlias: `❌ Alias harus 3–20 karakter.`,
   invalidProvince: `❌ Provinsi tidak ditemukan. Coba lagi (mis. "Jawa Barat"):`,
   premiumOnlyGenderFilter: `⭐ Filter gender hanya untuk Premium. Preferensi diset ke "any".`,
@@ -159,6 +171,22 @@ async function getInterests(supabase: ReturnType<typeof getSupabase>, profileId:
   return (data ?? []).map((r: { tag: string }) => r.tag);
 }
 
+async function applyTrustChange(
+  supabase: ReturnType<typeof getSupabase>,
+  profileId: string,
+  delta: number,
+): Promise<number | null> {
+  const { data, error } = await supabase.rpc("apply_trust_score_change", {
+    _profile_id: profileId,
+    _delta: delta,
+  });
+  if (error) {
+    console.error("apply_trust_score_change failed", error);
+    return null;
+  }
+  return data as number;
+}
+
 async function tryMatch(supabase: ReturnType<typeof getSupabase>, profile: Profile) {
   await supabase.from("match_queue").upsert(
     {
@@ -196,6 +224,20 @@ async function tryMatch(supabase: ReturnType<typeof getSupabase>, profile: Profi
   const myInterests = new Set(await getInterests(supabase, profile.id));
   const myPref = profile.is_premium ? profile.gender_preference : "any";
 
+  // Pra-ambil profil kandidat agar trust_score bisa dipakai di scoring
+  const candidateIds = candidates.map((c) => c.profile_id);
+  const { data: candidateProfiles } = await supabase
+    .from("profiles")
+    .select("id, trust_score")
+    .in("id", candidateIds);
+  const trustById = new Map<string, number>(
+    (candidateProfiles ?? []).map((p: { id: string; trust_score: number }) => [p.id, p.trust_score]),
+  );
+
+  // Penalti antrean untuk requester ber-trust rendah: makin rendah trust, makin lambat dipertimbangkan
+  const trustDeficit = Math.max(0, 70 - profile.trust_score);
+  const myPenalty = Math.floor(trustDeficit / 10);
+
   type Scored = { entry: typeof candidates[number]; score: number };
   const scored: Scored[] = [];
 
@@ -208,14 +250,29 @@ async function tryMatch(supabase: ReturnType<typeof getSupabase>, profile: Profi
     if (profile.province_code && c.province_code === profile.province_code) score += 3;
     if (myPref !== "any" && c.gender === myPref) score += 2;
     const theirInterests = await getInterests(supabase, c.profile_id);
-    const overlap = theirInterests.filter(t => myInterests.has(t)).length;
+    const overlap = theirInterests.filter((t) => myInterests.has(t)).length;
     score += overlap;
+
+    // Bonus trust kandidat: trust tinggi → diprioritaskan
+    const theirTrust = trustById.get(c.profile_id) ?? 100;
+    score += Math.floor((theirTrust - 70) / 20); // ~-3..+4
+
+    // Bonus waktu tunggu kandidat (anti-starvation)
+    const waitSec = (Date.now() - new Date(c.joined_at).getTime()) / 1000;
+    score += Math.floor(waitSec / 30);
+
+    // Penalti requester low-trust
+    score -= myPenalty;
+
     scored.push({ entry: c, score });
   }
 
   if (scored.length === 0) return null;
   scored.sort((a, b) => b.score - a.score || new Date(a.entry.joined_at).getTime() - new Date(b.entry.joined_at).getTime());
   const best = scored[0];
+
+  // Low-trust requester harus menunggu putaran berikutnya jika tidak ada match yang layak
+  if (myPenalty > 0 && best.score <= 0) return null;
 
   const partner = await getProfileById(supabase, best.entry.profile_id);
   const sameProvince = !!profile.province_code && profile.province_code === partner.province_code;
@@ -293,13 +350,43 @@ async function handleCari(supabase: ReturnType<typeof getSupabase>, profile: Pro
 
 async function endConversation(
   supabase: ReturnType<typeof getSupabase>,
-  conv: { id: string; user_a: string; user_b: string },
+  conv: { id: string; user_a: string; user_b: string; started_at: string },
   enderId: string,
-) {
+): Promise<{ durationSec: number }> {
+  const endedAt = new Date();
   await supabase
     .from("conversations")
-    .update({ status: "ended", ended_at: new Date().toISOString(), ended_by: enderId })
+    .update({ status: "ended", ended_at: endedAt.toISOString(), ended_by: enderId })
     .eq("id", conv.id);
+  const durationSec = (endedAt.getTime() - new Date(conv.started_at).getTime()) / 1000;
+  return { durationSec };
+}
+
+// Aturan trust dinamis berbasis durasi chat:
+// - <30 detik (yang /stop): -3 untuk pemutus (terlalu cepat menyerah/spam-skip)
+// - 30s–5 menit: netral (0)
+// - >=5 menit tanpa report: +3 untuk kedua pihak
+function trustDeltasFromDuration(durationSec: number): { ender: number; partner: number } {
+  if (durationSec < 30) return { ender: -3, partner: 0 };
+  if (durationSec >= 300) return { ender: 3, partner: 3 };
+  return { ender: 0, partner: 0 };
+}
+
+async function applyEndTrust(
+  supabase: ReturnType<typeof getSupabase>,
+  profile: Profile,
+  partner: Profile,
+  durationSec: number,
+) {
+  const { ender, partner: partnerDelta } = trustDeltasFromDuration(durationSec);
+  if (ender !== 0) {
+    const newScore = await applyTrustChange(supabase, profile.id, ender);
+    if (newScore !== null) await sendMessage(profile.telegram_chat_id, T.trustChanged(ender, newScore));
+  }
+  if (partnerDelta !== 0) {
+    const newScore = await applyTrustChange(supabase, partner.id, partnerDelta);
+    if (newScore !== null) await sendMessage(partner.telegram_chat_id, T.trustChanged(partnerDelta, newScore));
+  }
 }
 
 async function handleStop(supabase: ReturnType<typeof getSupabase>, profile: Profile) {
@@ -314,11 +401,12 @@ async function handleStop(supabase: ReturnType<typeof getSupabase>, profile: Pro
     await sendMessage(profile.telegram_chat_id, T.notInChat);
     return;
   }
-  await endConversation(supabase, conv, profile.id);
+  const { durationSec } = await endConversation(supabase, conv, profile.id);
   const partnerId = conv.user_a === profile.id ? conv.user_b : conv.user_a;
   const partner = await getProfileById(supabase, partnerId);
   await sendMessage(profile.telegram_chat_id, T.youLeft);
   await sendMessage(partner.telegram_chat_id, T.partnerLeft);
+  await applyEndTrust(supabase, profile, partner, durationSec);
 }
 
 async function handleReport(supabase: ReturnType<typeof getSupabase>, profile: Profile) {
