@@ -393,6 +393,15 @@ function trustDeltasFromDuration(durationSec: number): { ender: number; partner:
   return { ender: 0, partner: 0 };
 }
 
+function trustReason(durationSec: number): string {
+  const mm = Math.floor(durationSec / 60);
+  const ss = Math.floor(durationSec % 60);
+  const dur = `${mm}m ${ss}s`;
+  if (durationSec < 30) return `Sesi diakhiri terlalu cepat (${dur} &lt; 30 detik). Pemutus −3.`;
+  if (durationSec >= 300) return `Sesi sehat (${dur} ≥ 5 menit, tanpa report). Kedua pihak +3.`;
+  return `Sesi netral (${dur}). Skor tidak berubah.`;
+}
+
 async function applyEndTrust(
   supabase: ReturnType<typeof getSupabase>,
   profile: Profile,
@@ -400,13 +409,21 @@ async function applyEndTrust(
   durationSec: number,
 ) {
   const { ender, partner: partnerDelta } = trustDeltasFromDuration(durationSec);
-  if (ender !== 0) {
-    const newScore = await applyTrustChange(supabase, profile.id, ender);
-    if (newScore !== null) await sendMessage(profile.telegram_chat_id, T.trustChanged(ender, newScore));
+  const reason = trustReason(durationSec);
+
+  // Selalu kirim ringkasan ke kedua pihak (walau delta = 0) agar transparan.
+  const enderNew = ender !== 0
+    ? await applyTrustChange(supabase, profile.id, ender)
+    : profile.trust_score;
+  const partnerNew = partnerDelta !== 0
+    ? await applyTrustChange(supabase, partner.id, partnerDelta)
+    : partner.trust_score;
+
+  if (enderNew !== null) {
+    await sendMessage(profile.telegram_chat_id, T.trustSummary(ender, enderNew, reason));
   }
-  if (partnerDelta !== 0) {
-    const newScore = await applyTrustChange(supabase, partner.id, partnerDelta);
-    if (newScore !== null) await sendMessage(partner.telegram_chat_id, T.trustChanged(partnerDelta, newScore));
+  if (partnerNew !== null) {
+    await sendMessage(partner.telegram_chat_id, T.trustSummary(partnerDelta, partnerNew, reason));
   }
 }
 
