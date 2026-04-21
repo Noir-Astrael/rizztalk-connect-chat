@@ -677,25 +677,29 @@ async function handleBlock(supabase: ReturnType<typeof getSupabase>, profile: Pr
     blocked_id: blockedId,
   });
   if (error?.message.includes("duplicate")) {
-    await sendMessage(profile.telegram_chat_id, T.blockAlready);
+    await safeSend(profile.telegram_chat_id, T.blockAlready);
   } else if (error) {
     console.error("block insert failed", error);
   }
 
+  const durationSec = Math.round((Date.now() - new Date(conv.started_at).getTime()) / 1000);
   await endConversation(supabase, conv, profile.id);
-  await removeKeyboard(profile.telegram_chat_id, T.blockSuccess(partner.alias));
-  await sendMessage(partner.telegram_chat_id, T.blockNotice);
 
-  // Trust feedback: yang di-block kena -3 (sinyal lawan tidak nyaman); pemblokir 0.
+  try { await removeKeyboard(profile.telegram_chat_id, T.blockSuccess(partner.alias)); }
+  catch (e) { console.error("removeKeyboard failed", e); await safeSend(profile.telegram_chat_id, T.blockSuccess(partner.alias)); }
+  await safeSend(partner.telegram_chat_id, T.blockNotice);
+
   const blockedDelta = -3;
   const blockerDelta = 0;
-  const reason = `Sesi diakhiri via /block. Yang di-block −3 sebagai sinyal perilaku.`;
-  const blockerNew = profile.trust_score;
-  const blockedNew = await applyTrustChange(supabase, partner.id, blockedDelta);
-  await sendMessage(profile.telegram_chat_id, T.trustSummary(blockerDelta, blockerNew, reason));
-  if (blockedNew !== null) {
-    await sendMessage(partner.telegram_chat_id, T.trustSummary(blockedDelta, blockedNew, reason));
-  }
+  const reason = `Sesi diakhiri via /block (${Math.floor(durationSec / 60)}m${durationSec % 60}s). Yang di-block −3.`;
+
+  const blockerNew = blockerDelta !== 0
+    ? await recordTrustEvent(supabase, profile.id, blockerDelta, "block", reason, conv.id, durationSec)
+    : profile.trust_score;
+  const blockedNew = await recordTrustEvent(supabase, partner.id, blockedDelta, "block", reason, conv.id, durationSec);
+
+  if (blockerNew !== null) await safeSend(profile.telegram_chat_id, T.trustSummary(blockerDelta, blockerNew, reason));
+  if (blockedNew !== null) await safeSend(partner.telegram_chat_id, T.trustSummary(blockedDelta, blockedNew, reason));
 }
 
 async function handleStepInput(
