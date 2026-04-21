@@ -189,6 +189,16 @@ async function applyTrustChange(
 }
 
 async function tryMatch(supabase: ReturnType<typeof getSupabase>, profile: Profile) {
+  const now = Date.now();
+
+  // Upsert requester ke antrean. Pertahankan joined_at lama jika sudah ada (penting untuk anti-starvation).
+  const { data: existingQ } = await supabase
+    .from("match_queue")
+    .select("joined_at")
+    .eq("profile_id", profile.id)
+    .maybeSingle();
+  const myJoinedAt = existingQ?.joined_at ?? new Date().toISOString();
+
   await supabase.from("match_queue").upsert(
     {
       profile_id: profile.id,
@@ -197,7 +207,7 @@ async function tryMatch(supabase: ReturnType<typeof getSupabase>, profile: Profi
       gender_preference: profile.is_premium ? profile.gender_preference : "any",
       is_premium: profile.is_premium,
       status: "waiting",
-      joined_at: new Date().toISOString(),
+      joined_at: myJoinedAt,
     },
     { onConflict: "profile_id" },
   );
@@ -225,7 +235,7 @@ async function tryMatch(supabase: ReturnType<typeof getSupabase>, profile: Profi
   const myInterests = new Set(await getInterests(supabase, profile.id));
   const myPref = profile.is_premium ? profile.gender_preference : "any";
 
-  // Pra-ambil profil kandidat agar trust_score bisa dipakai di scoring
+  // Pra-ambil trust kandidat (dipakai konsisten di scoring + threshold)
   const candidateIds = candidates.map((c) => c.profile_id);
   const { data: candidateProfiles } = await supabase
     .from("profiles")
@@ -235,11 +245,17 @@ async function tryMatch(supabase: ReturnType<typeof getSupabase>, profile: Profi
     (candidateProfiles ?? []).map((p: { id: string; trust_score: number }) => [p.id, p.trust_score]),
   );
 
-  // Penalti antrean untuk requester ber-trust rendah: makin rendah trust, makin lambat dipertimbangkan
-  const trustDeficit = Math.max(0, 70 - profile.trust_score);
-  const myPenalty = Math.floor(trustDeficit / 10);
+  // Trust scoring konsisten — fungsi tunggal dipakai untuk requester & kandidat.
+  // Range trust 0..150; pivot di 70 (cukup terpercaya). Hasil ~ -3..+4.
+  const trustBonus = (t: number) => Math.max(-5, Math.min(5, Math.floor((t - 70) / 20)));
+  const myTrustBonus = trustBonus(profile.trust_score);
 
-  type Scored = { entry: typeof candidates[number]; score: number };
+  // Anti-starvation untuk requester sendiri: makin lama menunggu, makin "ditinggikan"
+  // ekspektasinya — sehingga match marjinal pun diterima setelah cukup lama.
+  const myWaitSec = (now - new Date(myJoinedAt).getTime()) / 1000;
+  const myWaitBoost = Math.floor(myWaitSec / 30); // +1 tiap 30 detik antrean
+
+  type Scored = { entry: typeof candidates[number]; score: number; theirTrust: number };
   const scored: Scored[] = [];
 
   for (const c of candidates) {
@@ -254,26 +270,30 @@ async function tryMatch(supabase: ReturnType<typeof getSupabase>, profile: Profi
     const overlap = theirInterests.filter((t) => myInterests.has(t)).length;
     score += overlap;
 
-    // Bonus trust kandidat: trust tinggi → diprioritaskan
     const theirTrust = trustById.get(c.profile_id) ?? 100;
-    score += Math.floor((theirTrust - 70) / 20); // ~-3..+4
 
-    // Bonus waktu tunggu kandidat (anti-starvation)
-    const waitSec = (Date.now() - new Date(c.joined_at).getTime()) / 1000;
-    score += Math.floor(waitSec / 30);
+    // Trust dipakai bersama: kontribusi gabungan kandidat + requester (rata-rata).
+    // Ini menjaga aturan prioritas tetap konsisten — tidak ada pihak yang "diabaikan".
+    score += Math.floor((trustBonus(theirTrust) + myTrustBonus) / 2);
 
-    // Penalti requester low-trust
-    score -= myPenalty;
+    // Bonus waktu tunggu kandidat (anti-starvation untuk pihak lain)
+    const candWaitSec = (now - new Date(c.joined_at).getTime()) / 1000;
+    score += Math.floor(candWaitSec / 30);
 
-    scored.push({ entry: c, score });
+    scored.push({ entry: c, score, theirTrust });
   }
 
   if (scored.length === 0) return null;
   scored.sort((a, b) => b.score - a.score || new Date(a.entry.joined_at).getTime() - new Date(b.entry.joined_at).getTime());
   const best = scored[0];
 
-  // Low-trust requester harus menunggu putaran berikutnya jika tidak ada match yang layak
-  if (myPenalty > 0 && best.score <= 0) return null;
+  // Threshold dinamis: requester low-trust harus menunggu match yang cukup baik,
+  // TAPI batasnya menurun seiring waktu tunggu (anti-kelaparan).
+  // - trust >= 70: terima apapun (threshold 0)
+  // - trust < 70: butuh skor minimum, dikurangi waitBoost.
+  const baseThreshold = profile.trust_score >= 70 ? 0 : Math.ceil((70 - profile.trust_score) / 15);
+  const effectiveThreshold = Math.max(0, baseThreshold - myWaitBoost);
+  if (best.score < effectiveThreshold) return null;
 
   const partner = await getProfileById(supabase, best.entry.profile_id);
   const sameProvince = !!profile.province_code && profile.province_code === partner.province_code;
