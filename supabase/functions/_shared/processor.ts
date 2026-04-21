@@ -55,11 +55,13 @@ const T = {
     `<b>Perintah Rizztalk</b>\n\n` +
     `/start — mulai / lihat status\n` +
     `/profile — atur profil (gender, lokasi, minat, bio)\n` +
-    `/cari — cari teman ngobrol baru\n` +
+    `/cari [filter] — cari teman ngobrol baru\n` +
+    `   filter: <code>normal</code> (≥60) · <code>terpercaya</code> (≥90) · <code>sangat_terpercaya</code> (≥120)\n` +
+    `   contoh: <code>/cari terpercaya</code>\n` +
     `/stop — akhiri obrolan saat ini / keluar antrean\n` +
     `/report — laporkan lawan chat (spam/asusila/bot/scam)\n` +
     `/block — blokir lawan chat agar tidak di-match lagi\n` +
-    `/me — lihat profil kamu\n` +
+    `/me — lihat profil & riwayat trust score kamu\n` +
     `/premium — info upgrade premium\n` +
     `/help — bantuan`,
   needOnboarding: `⚠️ Profil kamu belum lengkap. Ketik /profile dulu.`,
