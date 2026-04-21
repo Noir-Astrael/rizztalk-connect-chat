@@ -102,15 +102,27 @@ const T = {
     `Preset: ${PRESET_INTERESTS.slice(0, 12).join(", ")}, …\n\n` +
     (current.length ? `Saat ini: <i>${current.join(", ")}</i>\n\nKetik <code>skip</code> untuk lewati.` : `Ketik <code>skip</code> untuk lewati.`),
   promptBio: `Ketik <b>bio singkat</b> (maks 200 karakter), atau <code>skip</code>:`,
-  profileDone: (p: Profile, interests: string[]) =>
-    `✅ <b>Profil kamu</b>\n\n` +
-    `👤 ${p.alias}\n` +
-    `⚧ ${p.gender ?? "-"}\n` +
-    `📍 ${p.province_name ?? "-"}\n` +
-    `🎯 ${interests.length ? interests.join(", ") : "-"}\n` +
-    `📝 ${p.bio ?? "-"}\n` +
-    `⭐ Trust: ${p.trust_score}\n\n` +
-    `Ketik /cari untuk mulai ngobrol!`,
+  profileDone: (p: Profile, interests: string[]) => {
+    const trustLabel =
+      p.trust_score >= 120 ? "🌟 Sangat Terpercaya" :
+      p.trust_score >= 90 ? "✅ Terpercaya" :
+      p.trust_score >= 60 ? "🙂 Normal" :
+      p.trust_score >= 30 ? "⚠️ Rendah" : "🚨 Sangat Rendah";
+    return `✅ <b>Profil kamu</b>\n\n` +
+      `👤 ${p.alias}\n` +
+      `⚧ ${p.gender ?? "-"}\n` +
+      `📍 ${p.province_name ?? "-"}\n` +
+      `🎯 ${interests.length ? interests.join(", ") : "-"}\n` +
+      `📝 ${p.bio ?? "-"}\n` +
+      `⭐ Trust Score: <b>${p.trust_score}</b> — ${trustLabel}\n` +
+      `<i>Skor naik kalau chat lebih dari 5 menit tanpa report. Turun kalau /stop &lt;30 detik atau di-report.</i>\n\n` +
+      `Ketik /cari untuk mulai ngobrol!`;
+  },
+  trustChanged: (delta: number, newScore: number) => {
+    const sign = delta > 0 ? "+" : "";
+    const emoji = delta > 0 ? "📈" : "📉";
+    return `${emoji} Trust score: <b>${sign}${delta}</b> → ${newScore}`;
+  },
   invalidAlias: `❌ Alias harus 3–20 karakter.`,
   invalidProvince: `❌ Provinsi tidak ditemukan. Coba lagi (mis. "Jawa Barat"):`,
   premiumOnlyGenderFilter: `⭐ Filter gender hanya untuk Premium. Preferensi diset ke "any".`,
