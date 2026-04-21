@@ -93,6 +93,7 @@ const T = {
   reportAlready: `ℹ️ Kamu sudah pernah melaporkan user ini di obrolan ini.`,
   blockNoChat: `ℹ️ Kamu tidak sedang ngobrol. /block hanya bisa dipakai saat chat aktif.`,
   blockSuccess: (alias: string) => `🚫 <b>${alias}</b> diblokir. Kalian tidak akan di-match lagi.\nObrolan diakhiri.`,
+  blockNotice: `🚫 Lawan bicara mengakhiri obrolan dan memblokir kamu. Ketik /cari untuk cari yang baru.`,
   blockAlready: `ℹ️ User ini sudah ada di daftar block kamu.`,
   promptAlias: `Ketik <b>nama alias</b> kamu (3–20 karakter, akan ditampilkan ke lawan chat):`,
   promptGender: `Pilih <b>gender</b> kamu:`,
@@ -108,20 +109,28 @@ const T = {
       p.trust_score >= 90 ? "✅ Terpercaya" :
       p.trust_score >= 60 ? "🙂 Normal" :
       p.trust_score >= 30 ? "⚠️ Rendah" : "🚨 Sangat Rendah";
+    const filled = Math.round((Math.min(150, Math.max(0, p.trust_score)) / 150) * 10);
+    const bar = "▰".repeat(filled) + "▱".repeat(10 - filled);
     return `✅ <b>Profil kamu</b>\n\n` +
       `👤 ${p.alias}\n` +
       `⚧ ${p.gender ?? "-"}\n` +
       `📍 ${p.province_name ?? "-"}\n` +
       `🎯 ${interests.length ? interests.join(", ") : "-"}\n` +
-      `📝 ${p.bio ?? "-"}\n` +
-      `⭐ Trust Score: <b>${p.trust_score}</b> — ${trustLabel}\n` +
-      `<i>Skor naik kalau chat lebih dari 5 menit tanpa report. Turun kalau /stop &lt;30 detik atau di-report.</i>\n\n` +
+      `📝 ${p.bio ?? "-"}\n\n` +
+      `⭐ <b>Trust Score</b>: <b>${p.trust_score}</b> / 150 — ${trustLabel}\n` +
+      `<code>${bar}</code>\n\n` +
+      `<b>Aturan perubahan skor:</b>\n` +
+      `• /stop &lt; 30 detik → <b>−3</b> (pemutus)\n` +
+      `• Chat ≥ 5 menit tanpa report → <b>+3</b> (kedua pihak)\n` +
+      `• Di-report (terverifikasi) → <b>−5</b>; 5 report dlm 24 jam → ban 24 jam\n` +
+      `• Di-block lawan → <b>−3</b>\n` +
+      `<i>Skor &lt; 70 = antrean lebih lambat (butuh match yang lebih cocok). Skor tinggi diprioritaskan.</i>\n\n` +
       `Ketik /cari untuk mulai ngobrol!`;
   },
-  trustChanged: (delta: number, newScore: number) => {
+  trustSummary: (delta: number, newScore: number, reason: string) => {
     const sign = delta > 0 ? "+" : "";
-    const emoji = delta > 0 ? "📈" : "📉";
-    return `${emoji} Trust score: <b>${sign}${delta}</b> → ${newScore}`;
+    const emoji = delta > 0 ? "📈" : delta < 0 ? "📉" : "➖";
+    return `${emoji} <b>Trust score</b>: ${sign}${delta} → <b>${newScore}</b>\n<i>${reason}</i>`;
   },
   invalidAlias: `❌ Alias harus 3–20 karakter.`,
   invalidProvince: `❌ Provinsi tidak ditemukan. Coba lagi (mis. "Jawa Barat"):`,
@@ -188,6 +197,16 @@ async function applyTrustChange(
 }
 
 async function tryMatch(supabase: ReturnType<typeof getSupabase>, profile: Profile) {
+  const now = Date.now();
+
+  // Upsert requester ke antrean. Pertahankan joined_at lama jika sudah ada (penting untuk anti-starvation).
+  const { data: existingQ } = await supabase
+    .from("match_queue")
+    .select("joined_at")
+    .eq("profile_id", profile.id)
+    .maybeSingle();
+  const myJoinedAt = existingQ?.joined_at ?? new Date().toISOString();
+
   await supabase.from("match_queue").upsert(
     {
       profile_id: profile.id,
@@ -196,7 +215,7 @@ async function tryMatch(supabase: ReturnType<typeof getSupabase>, profile: Profi
       gender_preference: profile.is_premium ? profile.gender_preference : "any",
       is_premium: profile.is_premium,
       status: "waiting",
-      joined_at: new Date().toISOString(),
+      joined_at: myJoinedAt,
     },
     { onConflict: "profile_id" },
   );
@@ -224,7 +243,7 @@ async function tryMatch(supabase: ReturnType<typeof getSupabase>, profile: Profi
   const myInterests = new Set(await getInterests(supabase, profile.id));
   const myPref = profile.is_premium ? profile.gender_preference : "any";
 
-  // Pra-ambil profil kandidat agar trust_score bisa dipakai di scoring
+  // Pra-ambil trust kandidat (dipakai konsisten di scoring + threshold)
   const candidateIds = candidates.map((c) => c.profile_id);
   const { data: candidateProfiles } = await supabase
     .from("profiles")
@@ -234,11 +253,17 @@ async function tryMatch(supabase: ReturnType<typeof getSupabase>, profile: Profi
     (candidateProfiles ?? []).map((p: { id: string; trust_score: number }) => [p.id, p.trust_score]),
   );
 
-  // Penalti antrean untuk requester ber-trust rendah: makin rendah trust, makin lambat dipertimbangkan
-  const trustDeficit = Math.max(0, 70 - profile.trust_score);
-  const myPenalty = Math.floor(trustDeficit / 10);
+  // Trust scoring konsisten — fungsi tunggal dipakai untuk requester & kandidat.
+  // Range trust 0..150; pivot di 70 (cukup terpercaya). Hasil ~ -3..+4.
+  const trustBonus = (t: number) => Math.max(-5, Math.min(5, Math.floor((t - 70) / 20)));
+  const myTrustBonus = trustBonus(profile.trust_score);
 
-  type Scored = { entry: typeof candidates[number]; score: number };
+  // Anti-starvation untuk requester sendiri: makin lama menunggu, makin "ditinggikan"
+  // ekspektasinya — sehingga match marjinal pun diterima setelah cukup lama.
+  const myWaitSec = (now - new Date(myJoinedAt).getTime()) / 1000;
+  const myWaitBoost = Math.floor(myWaitSec / 30); // +1 tiap 30 detik antrean
+
+  type Scored = { entry: typeof candidates[number]; score: number; theirTrust: number };
   const scored: Scored[] = [];
 
   for (const c of candidates) {
@@ -253,26 +278,30 @@ async function tryMatch(supabase: ReturnType<typeof getSupabase>, profile: Profi
     const overlap = theirInterests.filter((t) => myInterests.has(t)).length;
     score += overlap;
 
-    // Bonus trust kandidat: trust tinggi → diprioritaskan
     const theirTrust = trustById.get(c.profile_id) ?? 100;
-    score += Math.floor((theirTrust - 70) / 20); // ~-3..+4
 
-    // Bonus waktu tunggu kandidat (anti-starvation)
-    const waitSec = (Date.now() - new Date(c.joined_at).getTime()) / 1000;
-    score += Math.floor(waitSec / 30);
+    // Trust dipakai bersama: kontribusi gabungan kandidat + requester (rata-rata).
+    // Ini menjaga aturan prioritas tetap konsisten — tidak ada pihak yang "diabaikan".
+    score += Math.floor((trustBonus(theirTrust) + myTrustBonus) / 2);
 
-    // Penalti requester low-trust
-    score -= myPenalty;
+    // Bonus waktu tunggu kandidat (anti-starvation untuk pihak lain)
+    const candWaitSec = (now - new Date(c.joined_at).getTime()) / 1000;
+    score += Math.floor(candWaitSec / 30);
 
-    scored.push({ entry: c, score });
+    scored.push({ entry: c, score, theirTrust });
   }
 
   if (scored.length === 0) return null;
   scored.sort((a, b) => b.score - a.score || new Date(a.entry.joined_at).getTime() - new Date(b.entry.joined_at).getTime());
   const best = scored[0];
 
-  // Low-trust requester harus menunggu putaran berikutnya jika tidak ada match yang layak
-  if (myPenalty > 0 && best.score <= 0) return null;
+  // Threshold dinamis: requester low-trust harus menunggu match yang cukup baik,
+  // TAPI batasnya menurun seiring waktu tunggu (anti-kelaparan).
+  // - trust >= 70: terima apapun (threshold 0)
+  // - trust < 70: butuh skor minimum, dikurangi waitBoost.
+  const baseThreshold = profile.trust_score >= 70 ? 0 : Math.ceil((70 - profile.trust_score) / 15);
+  const effectiveThreshold = Math.max(0, baseThreshold - myWaitBoost);
+  if (best.score < effectiveThreshold) return null;
 
   const partner = await getProfileById(supabase, best.entry.profile_id);
   const sameProvince = !!profile.province_code && profile.province_code === partner.province_code;
@@ -372,6 +401,15 @@ function trustDeltasFromDuration(durationSec: number): { ender: number; partner:
   return { ender: 0, partner: 0 };
 }
 
+function trustReason(durationSec: number): string {
+  const mm = Math.floor(durationSec / 60);
+  const ss = Math.floor(durationSec % 60);
+  const dur = `${mm}m ${ss}s`;
+  if (durationSec < 30) return `Sesi diakhiri terlalu cepat (${dur} &lt; 30 detik). Pemutus −3.`;
+  if (durationSec >= 300) return `Sesi sehat (${dur} ≥ 5 menit, tanpa report). Kedua pihak +3.`;
+  return `Sesi netral (${dur}). Skor tidak berubah.`;
+}
+
 async function applyEndTrust(
   supabase: ReturnType<typeof getSupabase>,
   profile: Profile,
@@ -379,13 +417,21 @@ async function applyEndTrust(
   durationSec: number,
 ) {
   const { ender, partner: partnerDelta } = trustDeltasFromDuration(durationSec);
-  if (ender !== 0) {
-    const newScore = await applyTrustChange(supabase, profile.id, ender);
-    if (newScore !== null) await sendMessage(profile.telegram_chat_id, T.trustChanged(ender, newScore));
+  const reason = trustReason(durationSec);
+
+  // Selalu kirim ringkasan ke kedua pihak (walau delta = 0) agar transparan.
+  const enderNew = ender !== 0
+    ? await applyTrustChange(supabase, profile.id, ender)
+    : profile.trust_score;
+  const partnerNew = partnerDelta !== 0
+    ? await applyTrustChange(supabase, partner.id, partnerDelta)
+    : partner.trust_score;
+
+  if (enderNew !== null) {
+    await sendMessage(profile.telegram_chat_id, T.trustSummary(ender, enderNew, reason));
   }
-  if (partnerDelta !== 0) {
-    const newScore = await applyTrustChange(supabase, partner.id, partnerDelta);
-    if (newScore !== null) await sendMessage(partner.telegram_chat_id, T.trustChanged(partnerDelta, newScore));
+  if (partnerNew !== null) {
+    await sendMessage(partner.telegram_chat_id, T.trustSummary(partnerDelta, partnerNew, reason));
   }
 }
 
@@ -448,7 +494,18 @@ async function handleBlock(supabase: ReturnType<typeof getSupabase>, profile: Pr
 
   await endConversation(supabase, conv, profile.id);
   await removeKeyboard(profile.telegram_chat_id, T.blockSuccess(partner.alias));
-  await sendMessage(partner.telegram_chat_id, T.partnerLeft);
+  await sendMessage(partner.telegram_chat_id, T.blockNotice);
+
+  // Trust feedback: yang di-block kena -3 (sinyal lawan tidak nyaman); pemblokir 0.
+  const blockedDelta = -3;
+  const blockerDelta = 0;
+  const reason = `Sesi diakhiri via /block. Yang di-block −3 sebagai sinyal perilaku.`;
+  const blockerNew = profile.trust_score;
+  const blockedNew = await applyTrustChange(supabase, partner.id, blockedDelta);
+  await sendMessage(profile.telegram_chat_id, T.trustSummary(blockerDelta, blockerNew, reason));
+  if (blockedNew !== null) {
+    await sendMessage(partner.telegram_chat_id, T.trustSummary(blockedDelta, blockedNew, reason));
+  }
 }
 
 async function handleStepInput(
