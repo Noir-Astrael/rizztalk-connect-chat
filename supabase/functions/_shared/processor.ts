@@ -93,6 +93,7 @@ const T = {
   reportAlready: `ℹ️ Kamu sudah pernah melaporkan user ini di obrolan ini.`,
   blockNoChat: `ℹ️ Kamu tidak sedang ngobrol. /block hanya bisa dipakai saat chat aktif.`,
   blockSuccess: (alias: string) => `🚫 <b>${alias}</b> diblokir. Kalian tidak akan di-match lagi.\nObrolan diakhiri.`,
+  blockNotice: `🚫 Lawan bicara mengakhiri obrolan dan memblokir kamu. Ketik /cari untuk cari yang baru.`,
   blockAlready: `ℹ️ User ini sudah ada di daftar block kamu.`,
   promptAlias: `Ketik <b>nama alias</b> kamu (3–20 karakter, akan ditampilkan ke lawan chat):`,
   promptGender: `Pilih <b>gender</b> kamu:`,
