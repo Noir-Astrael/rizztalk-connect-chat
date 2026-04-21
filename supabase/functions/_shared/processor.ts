@@ -171,6 +171,22 @@ async function getInterests(supabase: ReturnType<typeof getSupabase>, profileId:
   return (data ?? []).map((r: { tag: string }) => r.tag);
 }
 
+async function applyTrustChange(
+  supabase: ReturnType<typeof getSupabase>,
+  profileId: string,
+  delta: number,
+): Promise<number | null> {
+  const { data, error } = await supabase.rpc("apply_trust_score_change", {
+    _profile_id: profileId,
+    _delta: delta,
+  });
+  if (error) {
+    console.error("apply_trust_score_change failed", error);
+    return null;
+  }
+  return data as number;
+}
+
 async function tryMatch(supabase: ReturnType<typeof getSupabase>, profile: Profile) {
   await supabase.from("match_queue").upsert(
     {
