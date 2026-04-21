@@ -224,6 +224,20 @@ async function tryMatch(supabase: ReturnType<typeof getSupabase>, profile: Profi
   const myInterests = new Set(await getInterests(supabase, profile.id));
   const myPref = profile.is_premium ? profile.gender_preference : "any";
 
+  // Pra-ambil profil kandidat agar trust_score bisa dipakai di scoring
+  const candidateIds = candidates.map((c) => c.profile_id);
+  const { data: candidateProfiles } = await supabase
+    .from("profiles")
+    .select("id, trust_score")
+    .in("id", candidateIds);
+  const trustById = new Map<string, number>(
+    (candidateProfiles ?? []).map((p: { id: string; trust_score: number }) => [p.id, p.trust_score]),
+  );
+
+  // Penalti antrean untuk requester ber-trust rendah: makin rendah trust, makin lambat dipertimbangkan
+  const trustDeficit = Math.max(0, 70 - profile.trust_score);
+  const myPenalty = Math.floor(trustDeficit / 10);
+
   type Scored = { entry: typeof candidates[number]; score: number };
   const scored: Scored[] = [];
 
@@ -236,14 +250,29 @@ async function tryMatch(supabase: ReturnType<typeof getSupabase>, profile: Profi
     if (profile.province_code && c.province_code === profile.province_code) score += 3;
     if (myPref !== "any" && c.gender === myPref) score += 2;
     const theirInterests = await getInterests(supabase, c.profile_id);
-    const overlap = theirInterests.filter(t => myInterests.has(t)).length;
+    const overlap = theirInterests.filter((t) => myInterests.has(t)).length;
     score += overlap;
+
+    // Bonus trust kandidat: trust tinggi → diprioritaskan
+    const theirTrust = trustById.get(c.profile_id) ?? 100;
+    score += Math.floor((theirTrust - 70) / 20); // ~-3..+4
+
+    // Bonus waktu tunggu kandidat (anti-starvation)
+    const waitSec = (Date.now() - new Date(c.joined_at).getTime()) / 1000;
+    score += Math.floor(waitSec / 30);
+
+    // Penalti requester low-trust
+    score -= myPenalty;
+
     scored.push({ entry: c, score });
   }
 
   if (scored.length === 0) return null;
   scored.sort((a, b) => b.score - a.score || new Date(a.entry.joined_at).getTime() - new Date(b.entry.joined_at).getTime());
   const best = scored[0];
+
+  // Low-trust requester harus menunggu putaran berikutnya jika tidak ada match yang layak
+  if (myPenalty > 0 && best.score <= 0) return null;
 
   const partner = await getProfileById(supabase, best.entry.profile_id);
   const sameProvince = !!profile.province_code && profile.province_code === partner.province_code;
