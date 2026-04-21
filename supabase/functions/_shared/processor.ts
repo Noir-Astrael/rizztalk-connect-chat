@@ -498,9 +498,30 @@ async function handleProfileStart(profile: Profile) {
   await sendMessage(profile.telegram_chat_id, T.promptAlias);
 }
 
+async function fetchTrustHistory(
+  supabase: ReturnType<typeof getSupabase>,
+  profileId: string,
+  limit = 5,
+): Promise<TrustEventRow[]> {
+  const { data, error } = await supabase
+    .from("trust_events")
+    .select("delta, new_score, event_type, reason, duration_sec, created_at")
+    .eq("profile_id", profileId)
+    .order("created_at", { ascending: false })
+    .limit(limit);
+  if (error) {
+    console.error("fetchTrustHistory failed", error);
+    return [];
+  }
+  return (data ?? []) as TrustEventRow[];
+}
+
 async function handleMe(supabase: ReturnType<typeof getSupabase>, profile: Profile) {
-  const interests = await getInterests(supabase, profile.id);
-  await sendMessage(profile.telegram_chat_id, T.profileDone(profile, interests));
+  const [interests, history] = await Promise.all([
+    getInterests(supabase, profile.id),
+    fetchTrustHistory(supabase, profile.id, 5),
+  ]);
+  await safeSend(profile.telegram_chat_id, T.profileDone(profile, interests, history));
 }
 
 async function handleHelp(profile: Profile) {
@@ -511,7 +532,11 @@ async function handlePremium(profile: Profile) {
   await sendMessage(profile.telegram_chat_id, T.premium);
 }
 
-async function handleCari(supabase: ReturnType<typeof getSupabase>, profile: Profile) {
+async function handleCari(
+  supabase: ReturnType<typeof getSupabase>,
+  profile: Profile,
+  trustFilter: TrustFilter = "any",
+) {
   if (profile.is_banned_until && new Date(profile.is_banned_until) > new Date()) {
     await sendMessage(profile.telegram_chat_id, T.bannedUntil(new Date(profile.is_banned_until).toLocaleString("id-ID")));
     return;
@@ -525,18 +550,19 @@ async function handleCari(supabase: ReturnType<typeof getSupabase>, profile: Pro
     await sendMessage(profile.telegram_chat_id, T.alreadyChatting);
     return;
   }
-  await sendMessage(profile.telegram_chat_id, T.searching(true, profile.province_name));
+  await sendMessage(profile.telegram_chat_id, T.searching(true, profile.province_name, trustFilter));
 
-  const result = await tryMatch(supabase, profile);
+  const result = await tryMatch(supabase, profile, trustFilter);
   if (!result) {
     await sendMessage(profile.telegram_chat_id, T.inQueue);
     return;
   }
 
   const { partner, sameProvince } = result;
-  await sendMessage(profile.telegram_chat_id, T.matchFound(partner.alias, partner.province_name ?? "-", sameProvince));
-  await sendMessage(partner.telegram_chat_id, T.matchFound(profile.alias, profile.province_name ?? "-", sameProvince));
+  await safeSend(profile.telegram_chat_id, T.matchFound(partner.alias, partner.province_name ?? "-", sameProvince));
+  await safeSend(partner.telegram_chat_id, T.matchFound(profile.alias, profile.province_name ?? "-", sameProvince));
 }
+
 
 async function endConversation(
   supabase: ReturnType<typeof getSupabase>,
