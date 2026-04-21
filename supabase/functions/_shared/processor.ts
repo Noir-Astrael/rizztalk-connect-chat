@@ -109,14 +109,22 @@ const T = {
       p.trust_score >= 90 ? "✅ Terpercaya" :
       p.trust_score >= 60 ? "🙂 Normal" :
       p.trust_score >= 30 ? "⚠️ Rendah" : "🚨 Sangat Rendah";
+    const filled = Math.round((Math.min(150, Math.max(0, p.trust_score)) / 150) * 10);
+    const bar = "▰".repeat(filled) + "▱".repeat(10 - filled);
     return `✅ <b>Profil kamu</b>\n\n` +
       `👤 ${p.alias}\n` +
       `⚧ ${p.gender ?? "-"}\n` +
       `📍 ${p.province_name ?? "-"}\n` +
       `🎯 ${interests.length ? interests.join(", ") : "-"}\n` +
-      `📝 ${p.bio ?? "-"}\n` +
-      `⭐ Trust Score: <b>${p.trust_score}</b> — ${trustLabel}\n` +
-      `<i>Skor naik kalau chat lebih dari 5 menit tanpa report. Turun kalau /stop &lt;30 detik atau di-report.</i>\n\n` +
+      `📝 ${p.bio ?? "-"}\n\n` +
+      `⭐ <b>Trust Score</b>: <b>${p.trust_score}</b> / 150 — ${trustLabel}\n` +
+      `<code>${bar}</code>\n\n` +
+      `<b>Aturan perubahan skor:</b>\n` +
+      `• /stop &lt; 30 detik → <b>−3</b> (pemutus)\n` +
+      `• Chat ≥ 5 menit tanpa report → <b>+3</b> (kedua pihak)\n` +
+      `• Di-report (terverifikasi) → <b>−5</b>; 5 report dlm 24 jam → ban 24 jam\n` +
+      `• Di-block lawan → <b>−3</b>\n` +
+      `<i>Skor &lt; 70 = antrean lebih lambat (butuh match yang lebih cocok). Skor tinggi diprioritaskan.</i>\n\n` +
       `Ketik /cari untuk mulai ngobrol!`;
   },
   trustSummary: (delta: number, newScore: number, reason: string) => {
