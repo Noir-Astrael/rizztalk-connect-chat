@@ -72,8 +72,8 @@ export const Hero = () => (
         <div className="grid grid-cols-3 gap-4 sm:gap-8 mt-20 max-w-2xl mx-auto">
           {[
             { v: "<60s", l: "Match time" },
-            { v: "100%", l: "Anonim" },
-            { v: "24/7", l: "AI fallback" },
+            { v: "1 jam", l: "Auto-purge" },
+            { v: "AI", l: "Companion" },
           ].map((s) => (
             <div key={s.l} className="text-center">
               <div className="font-display font-bold text-3xl sm:text-4xl text-gradient">

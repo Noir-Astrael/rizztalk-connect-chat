@@ -2,6 +2,8 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { sendMessage, sendKeyboard, removeKeyboard, safeSend } from "./telegram.ts";
 import { PROVINCES_ID, PRESET_INTERESTS, findProvinceByText } from "./provinces-id.ts";
+import { ensureAiProfile, isAiConversation, aiReply, AI_TELEGRAM_USER_ID, AI_ALIAS } from "./ai-companion.ts";
+import { applyDetection } from "./bot-detection.ts";
 
 export type TgUser = { id: number; username?: string; first_name?: string; language_code?: string };
 export type TgMessage = {
@@ -25,6 +27,7 @@ type Profile = {
   bio: string | null;
   trust_score: number;
   is_premium: boolean;
+  premium_until?: string | null;
   is_banned_until: string | null;
   onboarding_completed: boolean;
 };
@@ -37,8 +40,12 @@ type Step =
   | { name: "set_interests" }
   | { name: "set_bio" }
   | { name: "set_gender_pref" }
-  | { name: "await_report_reason"; conversationId: string; reportedId: string };
+  | { name: "await_report_reason"; conversationId: string; reportedId: string }
+  | { name: "await_payment_proof"; referenceCode: string };
 const stepByChat = new Map<number, Step>();
+
+// Per-conversation message counter (for AI classifier sampling)
+const msgCountByConv = new Map<string, number>();
 
 export function getSupabase() {
   const url = Deno.env.get("SUPABASE_URL");
@@ -46,6 +53,12 @@ export function getSupabase() {
   if (!url || !key) throw new Error("Supabase env not configured");
   return createClient(url, key);
 }
+
+// ============= PRICING =============
+const PREMIUM_MONTHLY_IDR = 39_000;
+const PAYMENT_BANK = "BCA";
+const PAYMENT_ACCOUNT = "1234567890";
+const PAYMENT_NAME = "Rizztalk Indonesia";
 
 const T = {
   welcome: (alias: string) =>
@@ -62,17 +75,19 @@ const T = {
     `/report — laporkan lawan chat (spam/asusila/bot/scam)\n` +
     `/block — blokir lawan chat agar tidak di-match lagi\n` +
     `/me — lihat profil & riwayat trust score kamu\n` +
-    `/premium — info upgrade premium\n` +
-    `/help — bantuan`,
+    `/premium — upgrade premium\n` +
+    `/help — bantuan\n\n` +
+    `<i>💡 Jika tidak ada user nyata dalam 60 detik, AI Companion akan menyapa kamu (transparan, akan diberi tahu).</i>`,
   needOnboarding: `⚠️ Profil kamu belum lengkap. Ketik /profile dulu.`,
   bannedUntil: (until: string) => `🚫 Akun kamu sedang di-ban sampai <b>${until}</b>. Ketik /premium untuk info unban.`,
   searching: (sameProv: boolean, provName: string | null, filter: TrustFilter = "any") => {
     const base = sameProv
       ? `🔎 Mencari teman ngobrol dari <b>${provName}</b>…`
       : `🔎 Mencari teman ngobrol…`;
-    return filter === "any" ? base : `${base}\n<i>Filter trust: ${trustFilterLabel(filter)} (otomatis dilonggarkan jika menunggu lama).</i>`;
+    const note = `\n<i>Tunggu hingga 60 detik. Jika sepi, AI Companion akan menyapa.</i>`;
+    return filter === "any" ? base + note : `${base}\n<i>Filter trust: ${trustFilterLabel(filter)} (otomatis dilonggarkan jika menunggu lama).</i>${note}`;
   },
-  inQueue: `⏳ Kamu sudah di antrean. Tunggu sebentar…`,
+  inQueue: `⏳ Kamu sudah di antrean. Tunggu sebentar… (max 60 detik sebelum AI Companion aktif)`,
   alreadyChatting: `💬 Kamu sedang dalam obrolan. Ketik /stop untuk mengakhiri.`,
   matchFound: (alias: string, provName: string, sameProv: boolean) => {
     const banner = sameProv
@@ -81,16 +96,36 @@ const T = {
     return `${banner}\n\n💬 Kamu sekarang ngobrol dengan <b>${alias}</b> (${provName}).\nKetik /stop untuk akhiri.`;
   },
   partnerLeft: `👋 Lawan bicara mengakhiri obrolan. Ketik /cari untuk cari yang baru.`,
-  youLeft: `✅ Obrolan diakhiri. Ketik /cari untuk cari yang baru.`,
+  youLeft: `✅ Obrolan diakhiri. Pesan akan terhapus otomatis dari server dalam 1 jam.\nKetik /cari untuk cari yang baru.`,
   notInChat: `ℹ️ Kamu tidak sedang dalam obrolan. Ketik /cari untuk mulai.`,
   cancelled: `❎ Pencarian dibatalkan.`,
-  premium:
-    `⭐ <b>Rizztalk Premium</b>\n\n` +
-    `• Filter gender (cari khusus pria/wanita)\n` +
-    `• Chat dengan orang sebelumnya\n` +
-    `• Skip antrean lebih cepat\n` +
-    `• Unban instan\n\n` +
-    `Pembayaran segera tersedia (Midtrans + transfer manual).`,
+  premium: (isPremium: boolean, premiumUntil: string | null) => {
+    const status = isPremium && premiumUntil
+      ? `\n\n⭐ <b>Status:</b> Premium aktif sampai <b>${new Date(premiumUntil).toLocaleString("id-ID")}</b>.`
+      : `\n\n<b>Status:</b> Belum premium.`;
+    return `⭐ <b>Rizztalk Premium</b>\n\n` +
+      `• Filter gender (cari khusus pria/wanita)\n` +
+      `• Skip antrean lebih cepat\n` +
+      `• Unban instan (kecuali ban berat)\n` +
+      `• Prioritas matching\n\n` +
+      `<b>Harga:</b> Rp ${PREMIUM_MONTHLY_IDR.toLocaleString("id-ID")} / bulan${status}\n\n` +
+      `Ketik <code>/upgrade</code> untuk mulai upgrade (transfer manual).`;
+  },
+  upgradeInstructions: (refCode: string) =>
+    `💳 <b>Upgrade Premium</b>\n\n` +
+    `Total: <b>Rp ${PREMIUM_MONTHLY_IDR.toLocaleString("id-ID")}</b>\n` +
+    `Bank: <b>${PAYMENT_BANK}</b>\n` +
+    `No. Rekening: <code>${PAYMENT_ACCOUNT}</code>\n` +
+    `Atas nama: <b>${PAYMENT_NAME}</b>\n` +
+    `Kode unik: <b>${refCode}</b>\n\n` +
+    `<i>Penting:</i> Cantumkan kode <b>${refCode}</b> pada berita transfer agar otomatis terdeteksi admin.\n\n` +
+    `Setelah transfer, kirim bukti (nama pengirim + jam transfer + nominal) sebagai pesan teks. ` +
+    `Verifikasi 1×24 jam.`,
+  upgradeProofReceived: (refCode: string) =>
+    `✅ Bukti tercatat untuk kode <b>${refCode}</b>. Admin akan verifikasi 1×24 jam.\n` +
+    `Kamu akan otomatis dapat status premium begitu disetujui.`,
+  rateLimited: (bucket: string, sec: number) =>
+    `⏱️ Tunggu sebentar — kamu terlalu cepat (${bucket}). Coba lagi dalam ~${sec}s.`,
   reportNoChat: `ℹ️ Kamu tidak sedang ngobrol. /report hanya bisa dipakai saat chat aktif.`,
   reportPrompt: `🚩 Pilih alasan laporan:`,
   reportSuccess: `✅ Laporan terkirim. Terima kasih sudah bantu jaga komunitas.\nObrolan otomatis diakhiri. Ketik /cari untuk cari yang baru.`,
@@ -118,13 +153,17 @@ const T = {
     const historyBlock = history.length === 0
       ? `<i>Belum ada riwayat. Mulai chat dengan /cari!</i>`
       : history.map((h) => T.historyLine(h)).join("\n");
+    const premiumLine = p.is_premium && p.premium_until
+      ? `⭐ <b>Premium</b> aktif sampai ${new Date(p.premium_until).toLocaleString("id-ID")}\n`
+      : "";
     return `✅ <b>Profil kamu</b>\n\n` +
       `👤 ${p.alias}\n` +
       `⚧ ${p.gender ?? "-"}\n` +
       `📍 ${p.province_name ?? "-"}\n` +
       `🎯 ${interests.length ? interests.join(", ") : "-"}\n` +
-      `📝 ${p.bio ?? "-"}\n\n` +
-      `⭐ <b>Trust Score</b>: <b>${p.trust_score}</b> / 150 — ${label}\n` +
+      `📝 ${p.bio ?? "-"}\n` +
+      premiumLine +
+      `\n⭐ <b>Trust Score</b>: <b>${p.trust_score}</b> / 150 — ${label}\n` +
       `<code>${bar}</code>\n\n` +
       `<b>📜 Riwayat trust (5 terakhir):</b>\n${historyBlock}\n\n` +
       `<b>Aturan perubahan skor:</b>\n` +
@@ -132,6 +171,7 @@ const T = {
       `• Chat ≥ 5 menit tanpa report → <b>+3</b> (kedua pihak)\n` +
       `• Di-report (terverifikasi) → <b>−5</b>; 5 report dlm 24 jam → ban 24 jam\n` +
       `• Di-block lawan → <b>−3</b>\n` +
+      `• Bot/spam/scam terdeteksi → <b>−10</b>; severe → ban 24 jam\n` +
       `<i>Skor &lt; 70 = antrean lebih lambat. Filter trust di /cari otomatis dilonggarkan setelah 90 detik.</i>\n\n` +
       `Ketik /cari untuk mulai ngobrol!`;
   },
@@ -163,6 +203,15 @@ const T = {
   invalidAlias: `❌ Alias harus 3–20 karakter.`,
   invalidProvince: `❌ Provinsi tidak ditemukan. Coba lagi (mis. "Jawa Barat"):`,
   premiumOnlyGenderFilter: `⭐ Filter gender hanya untuk Premium. Preferensi diset ke "any".`,
+  detectionWarning: (reason: string, banned: boolean) =>
+    banned
+      ? `🚫 <b>Akun di-ban 24 jam.</b>\nAlasan: <i>${reason}</i>\nKetik /premium untuk info banding.`
+      : `⚠️ <b>Pesan kamu ditandai sistem.</b>\nAlasan: <i>${reason}</i>\nTrust −10. Hindari spam, link, scam, atau pelecehan.`,
+  partnerSanctioned: (banned: boolean) =>
+    banned
+      ? `🚫 Lawan bicara di-ban karena melanggar aturan. Sesi diakhiri otomatis.`
+      : `⚠️ Lawan bicara ditandai sistem. Tetap waspada.`,
+  contentBlocked: `❌ Pesan tidak terkirim — mengandung konten yang tidak diizinkan.`,
 };
 
 export type TrustEventRow = {
@@ -251,9 +300,6 @@ export function trustLabel(score: number): string {
   return "🚨 Sangat Rendah";
 }
 
-// Filter trust untuk /cari — opsi dipilih user.
-// "Anti-kelaparan" tetap berlaku: filter hanya MEMPERSEMPIT kandidat,
-// tidak mengubah threshold/wait-boost. Setelah waktu tertentu filter di-relax otomatis.
 export type TrustFilter = "any" | "normal" | "trusted" | "very_trusted";
 
 export function parseTrustFilter(text: string | null | undefined): TrustFilter {
@@ -318,12 +364,10 @@ export type Scored = { entry: QueueEntry; score: number; theirTrust: number };
 const TRUST_BONUS = (t: number) =>
   Math.max(-5, Math.min(5, Math.floor((t - 70) / 20)));
 
-// Anti-kelaparan untuk filter trust: setelah 90 detik antrean,
-// minimum trust kandidat diturunkan bertahap (relaxed) sampai 0.
 function effectiveTrustMin(filter: TrustFilter, waitSec: number): number {
   const base = trustFilterMin(filter);
   if (base === 0) return 0;
-  const relaxedSteps = Math.floor(Math.max(0, waitSec - 90) / 60); // tiap 60s setelah 90s
+  const relaxedSteps = Math.floor(Math.max(0, waitSec - 90) / 60);
   return Math.max(0, base - relaxedSteps * 30);
 }
 
@@ -366,7 +410,6 @@ export function scoreCandidates(input: MatchInputs): Scored | null {
   );
   const best = scored[0];
 
-  // Threshold dinamis untuk requester low-trust, di-relax oleh wait.
   const baseThreshold = requester.trust_score >= 70 ? 0 : Math.ceil((70 - requester.trust_score) / 15);
   const effectiveThreshold = Math.max(0, baseThreshold - myWaitBoost);
   if (best.score < effectiveThreshold) return null;
@@ -402,11 +445,14 @@ async function tryMatch(
     { onConflict: "profile_id" },
   );
 
+  const aiId = await ensureAiProfile(supabase);
+
   const { data: candidates } = await supabase
     .from("match_queue")
     .select("profile_id, province_code, gender, gender_preference, is_premium, joined_at")
     .eq("status", "waiting")
     .neq("profile_id", profile.id)
+    .neq("profile_id", aiId)
     .order("joined_at", { ascending: true })
     .limit(50);
 
@@ -529,7 +575,38 @@ async function handleHelp(profile: Profile) {
 }
 
 async function handlePremium(profile: Profile) {
-  await sendMessage(profile.telegram_chat_id, T.premium);
+  await sendMessage(profile.telegram_chat_id, T.premium(profile.is_premium, profile.premium_until ?? null));
+}
+
+async function handleUpgrade(supabase: ReturnType<typeof getSupabase>, profile: Profile) {
+  // Check pending request
+  const { data: pending } = await supabase
+    .from("payment_requests")
+    .select("reference_code")
+    .eq("profile_id", profile.id)
+    .eq("status", "pending")
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  let refCode: string;
+  if (pending) {
+    refCode = pending.reference_code;
+  } else {
+    const { data, error } = await supabase.rpc("request_premium_upgrade", {
+      _profile_id: profile.id,
+      _plan: "monthly",
+      _amount_idr: PREMIUM_MONTHLY_IDR,
+    });
+    if (error) {
+      console.error("request_premium_upgrade failed", error);
+      await safeSend(profile.telegram_chat_id, "❌ Gagal membuat permintaan upgrade. Coba lagi nanti.");
+      return;
+    }
+    refCode = String(data);
+  }
+  stepByChat.set(profile.telegram_chat_id, { name: "await_payment_proof", referenceCode: refCode });
+  await safeSend(profile.telegram_chat_id, T.upgradeInstructions(refCode));
 }
 
 async function handleCari(
@@ -574,14 +651,11 @@ async function endConversation(
     .from("conversations")
     .update({ status: "ended", ended_at: endedAt.toISOString(), ended_by: enderId })
     .eq("id", conv.id);
+  msgCountByConv.delete(conv.id);
   const durationSec = (endedAt.getTime() - new Date(conv.started_at).getTime()) / 1000;
   return { durationSec };
 }
 
-// Aturan trust dinamis berbasis durasi chat:
-// - <30 detik (yang /stop): -3 untuk pemutus (terlalu cepat menyerah/spam-skip)
-// - 30s–5 menit: netral (0)
-// - >=5 menit tanpa report: +3 untuk kedua pihak
 function trustDeltasFromDuration(durationSec: number): { ender: number; partner: number } {
   if (durationSec < 30) return { ender: -3, partner: 0 };
   if (durationSec >= 300) return { ender: 3, partner: 3 };
@@ -604,11 +678,12 @@ async function applyEndTrust(
   conversationId: string,
   durationSec: number,
 ) {
+  // Skip trust effects when partner is AI (AI Companion has no trust dynamics)
+  if (partner.telegram_user_id === AI_TELEGRAM_USER_ID) return;
   const { ender, partner: partnerDelta } = trustDeltasFromDuration(durationSec);
   const reason = trustReason(durationSec);
   const durInt = Math.round(durationSec);
 
-  // Catat event + ubah skor (dipakai juga di /me history). Selalu kirim ringkasan ke kedua pihak.
   const enderNew = ender !== 0
     ? await recordTrustEvent(supabase, profile.id, ender, "stop", reason, conversationId, durInt)
     : profile.trust_score;
@@ -619,7 +694,7 @@ async function applyEndTrust(
   if (enderNew !== null) {
     await safeSend(profile.telegram_chat_id, T.trustSummary(ender, enderNew, reason));
   }
-  if (partnerNew !== null) {
+  if (partnerNew !== null && partner.telegram_user_id !== AI_TELEGRAM_USER_ID) {
     await safeSend(partner.telegram_chat_id, T.trustSummary(partnerDelta, partnerNew, reason));
   }
 }
@@ -639,9 +714,10 @@ async function handleStop(supabase: ReturnType<typeof getSupabase>, profile: Pro
   const { durationSec } = await endConversation(supabase, conv, profile.id);
   const partnerId = conv.user_a === profile.id ? conv.user_b : conv.user_a;
   const partner = await getProfileById(supabase, partnerId);
-  // Selalu coba kirim ke kedua pihak — safeSend tidak melempar walau salah satu chat_id mati.
   await safeSend(profile.telegram_chat_id, T.youLeft);
-  await safeSend(partner.telegram_chat_id, T.partnerLeft);
+  if (partner.telegram_user_id !== AI_TELEGRAM_USER_ID) {
+    await safeSend(partner.telegram_chat_id, T.partnerLeft);
+  }
   await applyEndTrust(supabase, profile, partner, conv.id, durationSec);
 }
 
@@ -652,6 +728,11 @@ async function handleReport(supabase: ReturnType<typeof getSupabase>, profile: P
     return;
   }
   const reportedId = conv.user_a === profile.id ? conv.user_b : conv.user_a;
+  const reported = await getProfileById(supabase, reportedId);
+  if (reported.telegram_user_id === AI_TELEGRAM_USER_ID) {
+    await sendMessage(profile.telegram_chat_id, "ℹ️ Kamu sedang dengan AI Companion. Untuk feedback AI, ketik /stop saja.");
+    return;
+  }
   stepByChat.set(profile.telegram_chat_id, {
     name: "await_report_reason",
     conversationId: conv.id,
@@ -671,6 +752,11 @@ async function handleBlock(supabase: ReturnType<typeof getSupabase>, profile: Pr
   }
   const blockedId = conv.user_a === profile.id ? conv.user_b : conv.user_a;
   const partner = await getProfileById(supabase, blockedId);
+
+  if (partner.telegram_user_id === AI_TELEGRAM_USER_ID) {
+    await sendMessage(profile.telegram_chat_id, "ℹ️ Tidak bisa block AI Companion. Ketik /stop saja.");
+    return;
+  }
 
   const { error } = await supabase.from("user_blocks").insert({
     blocker_id: profile.id,
@@ -700,6 +786,114 @@ async function handleBlock(supabase: ReturnType<typeof getSupabase>, profile: Pr
 
   if (blockerNew !== null) await safeSend(profile.telegram_chat_id, T.trustSummary(blockerDelta, blockerNew, reason));
   if (blockedNew !== null) await safeSend(partner.telegram_chat_id, T.trustSummary(blockedDelta, blockedNew, reason));
+}
+
+// ============= ADMIN COMMANDS =============
+async function isAdmin(supabase: ReturnType<typeof getSupabase>, profileId: string): Promise<boolean> {
+  const { data } = await supabase.rpc("has_role", { _profile_id: profileId, _role: "admin" });
+  return !!data;
+}
+
+async function handleAdmin(
+  supabase: ReturnType<typeof getSupabase>,
+  profile: Profile,
+  args: string[],
+) {
+  if (!(await isAdmin(supabase, profile.id))) {
+    await sendMessage(profile.telegram_chat_id, "🚫 Akses admin saja.");
+    return;
+  }
+  const sub = args[0]?.toLowerCase();
+  if (!sub) {
+    await sendMessage(
+      profile.telegram_chat_id,
+      `<b>Admin commands</b>\n` +
+        `/admin pending — list payment pending\n` +
+        `/admin approve &lt;ref&gt; [days] — approve payment\n` +
+        `/admin reject &lt;ref&gt; [note] — reject payment\n` +
+        `/admin stats — statistik global\n` +
+        `/admin unban &lt;telegram_user_id&gt; — unban user`,
+    );
+    return;
+  }
+  if (sub === "pending") {
+    const { data } = await supabase
+      .from("payment_requests")
+      .select("reference_code, profile_id, plan, amount_idr, created_at, proof_note")
+      .eq("status", "pending")
+      .order("created_at", { ascending: false })
+      .limit(20);
+    if (!data || data.length === 0) {
+      await sendMessage(profile.telegram_chat_id, "✅ Tidak ada pending payment.");
+      return;
+    }
+    const lines = data.map((r) =>
+      `<code>${r.reference_code}</code> · ${r.plan} · Rp${Number(r.amount_idr).toLocaleString("id-ID")}\n` +
+      `   <i>${new Date(r.created_at).toLocaleString("id-ID")}</i>\n` +
+      `   proof: ${r.proof_note ? r.proof_note.slice(0, 100) : "-"}`
+    );
+    await sendMessage(profile.telegram_chat_id, `<b>Pending (${data.length})</b>\n\n${lines.join("\n\n")}`);
+    return;
+  }
+  if (sub === "approve") {
+    const ref = args[1];
+    const days = parseInt(args[2] ?? "30", 10) || 30;
+    if (!ref) { await sendMessage(profile.telegram_chat_id, "Usage: /admin approve &lt;ref&gt; [days]"); return; }
+    const { data, error } = await supabase.rpc("approve_premium_payment", {
+      _reference_code: ref, _days: days, _admin_id: profile.id, _admin_note: null,
+    });
+    if (error || !data) { await sendMessage(profile.telegram_chat_id, `❌ Gagal: ${error?.message ?? "not found/already processed"}`); return; }
+    // notify user
+    const { data: pr } = await supabase.from("payment_requests").select("profile_id").eq("reference_code", ref).maybeSingle();
+    if (pr) {
+      const { data: u } = await supabase.from("profiles").select("telegram_chat_id, premium_until").eq("id", pr.profile_id).single();
+      if (u) await safeSend(u.telegram_chat_id, `⭐ Premium aktif sampai <b>${new Date(u.premium_until).toLocaleString("id-ID")}</b>. Selamat!`);
+    }
+    await sendMessage(profile.telegram_chat_id, `✅ Approved ${ref} (+${days}d)`);
+    return;
+  }
+  if (sub === "reject") {
+    const ref = args[1];
+    const note = args.slice(2).join(" ") || null;
+    if (!ref) { await sendMessage(profile.telegram_chat_id, "Usage: /admin reject &lt;ref&gt; [note]"); return; }
+    const { data, error } = await supabase.rpc("reject_premium_payment", {
+      _reference_code: ref, _admin_id: profile.id, _admin_note: note,
+    });
+    if (error || !data) { await sendMessage(profile.telegram_chat_id, `❌ Gagal: ${error?.message ?? "not found/already processed"}`); return; }
+    const { data: pr } = await supabase.from("payment_requests").select("profile_id").eq("reference_code", ref).maybeSingle();
+    if (pr) {
+      const { data: u } = await supabase.from("profiles").select("telegram_chat_id").eq("id", pr.profile_id).single();
+      if (u) await safeSend(u.telegram_chat_id, `❌ Pembayaran <code>${ref}</code> ditolak.${note ? `\nCatatan: <i>${note}</i>` : ""}\nHubungi admin jika ada kekeliruan.`);
+    }
+    await sendMessage(profile.telegram_chat_id, `✅ Rejected ${ref}`);
+    return;
+  }
+  if (sub === "stats") {
+    const [{ count: nProfiles }, { count: nActive }, { count: nReports }, { count: nBots }] = await Promise.all([
+      supabase.from("profiles").select("id", { count: "exact", head: true }),
+      supabase.from("conversations").select("id", { count: "exact", head: true }).eq("status", "active"),
+      supabase.from("user_reports").select("id", { count: "exact", head: true }).gte("created_at", new Date(Date.now() - 86_400_000).toISOString()),
+      supabase.from("bot_signals").select("id", { count: "exact", head: true }).gte("created_at", new Date(Date.now() - 86_400_000).toISOString()),
+    ]);
+    await sendMessage(profile.telegram_chat_id,
+      `<b>📊 Stats</b>\n` +
+      `Profiles: <b>${nProfiles ?? 0}</b>\n` +
+      `Active chats: <b>${nActive ?? 0}</b>\n` +
+      `Reports 24h: <b>${nReports ?? 0}</b>\n` +
+      `Bot signals 24h: <b>${nBots ?? 0}</b>`);
+    return;
+  }
+  if (sub === "unban") {
+    const tgId = parseInt(args[1] ?? "", 10);
+    if (!tgId) { await sendMessage(profile.telegram_chat_id, "Usage: /admin unban &lt;telegram_user_id&gt;"); return; }
+    const { data: target } = await supabase.from("profiles").select("id, telegram_chat_id").eq("telegram_user_id", tgId).maybeSingle();
+    if (!target) { await sendMessage(profile.telegram_chat_id, "❌ User tidak ditemukan."); return; }
+    await supabase.from("profiles").update({ is_banned_until: null, ban_reason: null }).eq("id", target.id);
+    await safeSend(target.telegram_chat_id, "✅ Akun kamu di-unban oleh admin.");
+    await sendMessage(profile.telegram_chat_id, `✅ Unbanned tg=${tgId}`);
+    return;
+  }
+  await sendMessage(profile.telegram_chat_id, "Subcommand tidak dikenal. /admin tanpa argumen untuk lihat daftar.");
 }
 
 async function handleStepInput(
@@ -784,6 +978,22 @@ async function handleStepInput(
     return true;
   }
 
+  if (step.name === "await_payment_proof") {
+    const proof = text.trim().slice(0, 500);
+    if (proof.length < 5) {
+      await sendMessage(profile.telegram_chat_id, "❌ Detail bukti terlalu pendek. Sertakan nama pengirim, jam, dan nominal.");
+      return true;
+    }
+    await supabase
+      .from("payment_requests")
+      .update({ proof_note: proof, updated_at: new Date().toISOString() })
+      .eq("reference_code", step.referenceCode)
+      .eq("status", "pending");
+    stepByChat.set(profile.telegram_chat_id, { name: "idle" });
+    await safeSend(profile.telegram_chat_id, T.upgradeProofReceived(step.referenceCode));
+    return true;
+  }
+
   if (step.name === "await_report_reason") {
     const reasonMap: Record<string, "spam" | "nsfw" | "bot" | "scam" | "harassment" | "other"> = {
       "spam": "spam",
@@ -823,15 +1033,11 @@ async function handleStepInput(
       reason,
     });
 
-    // Trigger DB handle_new_report sudah turunkan trust −5 & set ban jika perlu.
-    // Ambil state terbaru reported untuk notifikasi spesifik + catat trust event.
     const reported = await getProfileById(supabase, step.reportedId);
     const banned = !!reported.is_banned_until && new Date(reported.is_banned_until) > new Date();
     const banUntil = banned ? new Date(reported.is_banned_until!).toLocaleString("id-ID") : null;
     const reasonText = `Report terverifikasi (${reason})${banned ? " · auto-ban 24 jam tercapai" : ""}`;
 
-    // Catat sebagai event riwayat untuk yang di-report (delta -5 sudah diaplikasikan trigger,
-    // jadi kita pakai delta=-5 dengan new_score=skor saat ini untuk audit trail).
     await supabase.from("trust_events").insert({
       profile_id: reported.id,
       conversation_id: step.conversationId,
@@ -842,24 +1048,44 @@ async function handleStepInput(
     });
 
     const conv = await getActiveConversation(supabase, profile.id);
-    let durationSec = 0;
     if (conv && conv.id === step.conversationId) {
-      durationSec = Math.round((Date.now() - new Date(conv.started_at).getTime()) / 1000);
       await endConversation(supabase, conv, profile.id);
     }
 
     stepByChat.set(profile.telegram_chat_id, { name: "idle" });
 
-    // Notifikasi terverifikasi ke kedua pihak (tahan-error)
     try { await removeKeyboard(profile.telegram_chat_id, T.reportSuccess); }
     catch (e) { console.error("removeKeyboard failed", e); await safeSend(profile.telegram_chat_id, T.reportSuccess); }
     await safeSend(profile.telegram_chat_id, T.reportSummaryReporter(profile.trust_score));
-    await safeSend(reported.telegram_chat_id, T.partnerLeft);
-    await safeSend(reported.telegram_chat_id, T.reportSummaryReported(reported.trust_score, banned, banUntil));
+    if (reported.telegram_user_id !== AI_TELEGRAM_USER_ID) {
+      await safeSend(reported.telegram_chat_id, T.partnerLeft);
+      await safeSend(reported.telegram_chat_id, T.reportSummaryReported(reported.trust_score, banned, banUntil));
+    }
     return true;
   }
 
   return false;
+}
+
+// ============= Rate limit wrapper =============
+async function checkRate(
+  supabase: ReturnType<typeof getSupabase>,
+  profileId: string,
+  bucket: string,
+  max: number,
+  windowSec: number,
+): Promise<boolean> {
+  const { data, error } = await supabase.rpc("check_rate_limit", {
+    _profile_id: profileId,
+    _bucket: bucket,
+    _max_count: max,
+    _window_seconds: windowSec,
+  });
+  if (error) {
+    console.error("check_rate_limit failed", error);
+    return true; // fail-open
+  }
+  return !!data;
 }
 
 export async function processUpdate(supabase: ReturnType<typeof getSupabase>, update: TgUpdate) {
@@ -887,13 +1113,44 @@ export async function processUpdate(supabase: ReturnType<typeof getSupabase>, up
     return;
   }
 
+  // Global rate limit: 30 events / 60s per user
+  const allowed = await checkRate(supabase, profile.id, "global", 30, 60);
+  if (!allowed) {
+    await sendMessage(profile.telegram_chat_id, T.rateLimited("global", 60));
+    return;
+  }
+
   const text = msg.text.trim();
+  // Hard input cap (defense)
+  if (text.length > 2000) {
+    await sendMessage(profile.telegram_chat_id, "❌ Pesan terlalu panjang (max 2000 karakter).");
+    return;
+  }
+
   const parts = text.startsWith("/") ? text.split(/\s+/) : [];
   const cmd = parts.length > 0 ? parts[0].split("@")[0].toLowerCase() : null;
   const arg1 = parts[1] ?? null;
 
   if (cmd) {
-    stepByChat.set(profile.telegram_chat_id, { name: "idle" });
+    // Per-command rate limits
+    const limits: Record<string, [number, number]> = {
+      "/cari": [10, 60], "/find": [10, 60], "/match": [10, 60],
+      "/stop": [20, 60], "/end": [20, 60],
+      "/report": [5, 300], "/block": [10, 300],
+      "/upgrade": [3, 300],
+    };
+    const lim = limits[cmd];
+    if (lim) {
+      const ok = await checkRate(supabase, profile.id, `cmd:${cmd}`, lim[0], lim[1]);
+      if (!ok) { await sendMessage(profile.telegram_chat_id, T.rateLimited(cmd, lim[1])); return; }
+    }
+
+    // Don't reset step for /cari if we're in a flow (e.g. payment proof)
+    const currentStep = stepByChat.get(profile.telegram_chat_id);
+    if (cmd !== "/help" && cmd !== "/me" && currentStep?.name !== "await_payment_proof") {
+      stepByChat.set(profile.telegram_chat_id, { name: "idle" });
+    }
+
     switch (cmd) {
       case "/start": return handleStart(supabase, profile);
       case "/help": return handleHelp(profile);
@@ -907,6 +1164,8 @@ export async function processUpdate(supabase: ReturnType<typeof getSupabase>, up
       case "/report": return handleReport(supabase, profile);
       case "/block": return handleBlock(supabase, profile);
       case "/premium": return handlePremium(profile);
+      case "/upgrade": return handleUpgrade(supabase, profile);
+      case "/admin": return handleAdmin(supabase, profile, parts.slice(1));
       default:
         await sendMessage(profile.telegram_chat_id, `Perintah tidak dikenal. Ketik /help.`);
         return;
@@ -925,6 +1184,36 @@ export async function processUpdate(supabase: ReturnType<typeof getSupabase>, up
   const partnerId = conv.user_a === profile.id ? conv.user_b : conv.user_a;
   const partner = await getProfileById(supabase, partnerId);
 
+  // Per-conversation message rate limit (anti-spam): 30 msgs / 30s
+  const msgOk = await checkRate(supabase, profile.id, "msg", 30, 30);
+  if (!msgOk) {
+    await sendMessage(profile.telegram_chat_id, T.rateLimited("msg", 30));
+    return;
+  }
+
+  // Bot/spam/scam detection (behavioral + AI sample)
+  const count = (msgCountByConv.get(conv.id) ?? 0) + 1;
+  msgCountByConv.set(conv.id, count);
+  const detection = await applyDetection(supabase, profile.id, conv.id, text, count).catch((e) => {
+    console.error("applyDetection failed", e);
+    return { flagged: false, banned: false, banUntil: null, reason: "" };
+  });
+
+  if (detection.flagged) {
+    await safeSend(profile.telegram_chat_id, T.detectionWarning(detection.reason, detection.banned));
+    if (partner.telegram_user_id !== AI_TELEGRAM_USER_ID) {
+      await safeSend(partner.telegram_chat_id, T.partnerSanctioned(detection.banned));
+    }
+    if (detection.banned) {
+      await endConversation(supabase, conv, profile.id);
+      return;
+    }
+    // For non-severe flags, drop the offending message
+    await safeSend(profile.telegram_chat_id, T.contentBlocked);
+    return;
+  }
+
+  // Persist & route message
   await supabase.from("messages").insert({
     conversation_id: conv.id,
     sender_id: profile.id,
@@ -932,5 +1221,14 @@ export async function processUpdate(supabase: ReturnType<typeof getSupabase>, up
     telegram_message_id: msg.message_id,
   });
 
-  await sendMessage(partner.telegram_chat_id, text.slice(0, 2000));
+  // AI Companion routing
+  const { ai } = await isAiConversation(supabase, conv);
+  if (ai) {
+    await aiReply(supabase, conv.id, profile.id, profile.telegram_chat_id, text).catch((e) => {
+      console.error("aiReply failed", e);
+    });
+    return;
+  }
+
+  await safeSend(partner.telegram_chat_id, text.slice(0, 2000));
 }

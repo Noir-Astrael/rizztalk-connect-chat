@@ -1,27 +1,27 @@
 const phases = [
   {
     phase: "Fase 1",
-    when: "Bulan 1-2",
+    when: "Selesai ✓",
     title: "Foundation",
-    items: ["Auth & user system", "Trust score core", "Admin dashboard MVP"],
+    items: ["Telegram bot live", "Onboarding & profil", "Match engine + trust score"],
   },
   {
     phase: "Fase 2",
-    when: "Bulan 2-3",
-    title: "Real-time Chat",
-    items: ["WebSocket Hub", "Matching engine", "Alias generator"],
+    when: "Selesai ✓",
+    title: "Safety",
+    items: ["Report & block", "Trust events history", "Auto-purge pesan 1 jam"],
   },
   {
     phase: "Fase 3",
-    when: "Bulan 3-4",
-    title: "Monetization",
-    items: ["Midtrans integration", "Manual transfer", "Premium tier"],
+    when: "Selesai ✓",
+    title: "Intelligence",
+    items: ["AI Companion (Gemini)", "Bot/spam/scam detection", "Rate limiting + admin tools"],
   },
   {
     phase: "Fase 4",
-    when: "Bulan 5-6",
-    title: "Intelligence",
-    items: ["AI fallback Claude", "Bot detection NLP", "Auto moderation"],
+    when: "Berikutnya",
+    title: "Scale",
+    items: ["Midtrans QRIS/VA", "Premium gender filter", "Multi-region matching"],
   },
 ];
 
