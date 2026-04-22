@@ -14,6 +14,51 @@ export type Database = {
   }
   public: {
     Tables: {
+      bot_signals: {
+        Row: {
+          conversation_id: string | null
+          created_at: string
+          details: Json
+          id: string
+          profile_id: string
+          score: number
+          signal_type: string
+        }
+        Insert: {
+          conversation_id?: string | null
+          created_at?: string
+          details?: Json
+          id?: string
+          profile_id: string
+          score: number
+          signal_type: string
+        }
+        Update: {
+          conversation_id?: string | null
+          created_at?: string
+          details?: Json
+          id?: string
+          profile_id?: string
+          score?: number
+          signal_type?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "bot_signals_conversation_id_fkey"
+            columns: ["conversation_id"]
+            isOneToOne: false
+            referencedRelation: "conversations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "bot_signals_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       conversations: {
         Row: {
           ended_at: string | null
@@ -158,6 +203,69 @@ export type Database = {
           },
         ]
       }
+      payment_requests: {
+        Row: {
+          admin_note: string | null
+          amount_idr: number
+          created_at: string
+          id: string
+          method: string
+          plan: string
+          profile_id: string
+          proof_note: string | null
+          reference_code: string
+          reviewed_at: string | null
+          reviewed_by: string | null
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          admin_note?: string | null
+          amount_idr: number
+          created_at?: string
+          id?: string
+          method?: string
+          plan?: string
+          profile_id: string
+          proof_note?: string | null
+          reference_code: string
+          reviewed_at?: string | null
+          reviewed_by?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          admin_note?: string | null
+          amount_idr?: number
+          created_at?: string
+          id?: string
+          method?: string
+          plan?: string
+          profile_id?: string
+          proof_note?: string | null
+          reference_code?: string
+          reviewed_at?: string | null
+          reviewed_by?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "payment_requests_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "payment_requests_reviewed_by_fkey"
+            columns: ["reviewed_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       profiles: {
         Row: {
           alias: string
@@ -229,6 +337,38 @@ export type Database = {
           updated_at?: string
         }
         Relationships: []
+      }
+      rate_limits: {
+        Row: {
+          bucket: string
+          count: number
+          id: string
+          profile_id: string
+          window_start: string
+        }
+        Insert: {
+          bucket: string
+          count?: number
+          id?: string
+          profile_id: string
+          window_start?: string
+        }
+        Update: {
+          bucket?: string
+          count?: number
+          id?: string
+          profile_id?: string
+          window_start?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "rate_limits_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       telegram_bot_state: {
         Row: {
@@ -500,6 +640,24 @@ export type Database = {
         Args: { _delta: number; _profile_id: string }
         Returns: number
       }
+      approve_premium_payment: {
+        Args: {
+          _admin_id?: string
+          _admin_note?: string
+          _days?: number
+          _reference_code: string
+        }
+        Returns: boolean
+      }
+      check_rate_limit: {
+        Args: {
+          _bucket: string
+          _max_count: number
+          _profile_id: string
+          _window_seconds: number
+        }
+        Returns: boolean
+      }
       current_profile_id: { Args: never; Returns: string }
       find_or_create_profile_by_telegram_id: {
         Args: {
@@ -519,6 +677,7 @@ export type Database = {
         Returns: boolean
       }
       is_admin: { Args: never; Returns: boolean }
+      purge_old_messages: { Args: never; Returns: number }
       record_trust_event: {
         Args: {
           _conversation_id?: string
@@ -529,6 +688,18 @@ export type Database = {
           _reason: string
         }
         Returns: number
+      }
+      reject_premium_payment: {
+        Args: {
+          _admin_id?: string
+          _admin_note?: string
+          _reference_code: string
+        }
+        Returns: boolean
+      }
+      request_premium_upgrade: {
+        Args: { _amount_idr: number; _plan: string; _profile_id: string }
+        Returns: string
       }
     }
     Enums: {
