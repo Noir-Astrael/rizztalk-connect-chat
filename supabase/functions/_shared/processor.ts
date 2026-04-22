@@ -1,6 +1,6 @@
 // Shared Telegram update processor — used by both telegram-poll (cron) and telegram-webhook (instant).
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
-import { sendMessage, sendKeyboard, removeKeyboard, safeSend } from "./telegram.ts";
+import { sendMessage, sendKeyboard, removeKeyboard, safeSend, sendPhoto } from "./telegram.ts";
 import { PROVINCES_ID, PRESET_INTERESTS, findProvinceByText } from "./provinces-id.ts";
 import { ensureAiProfile, isAiConversation, aiReply, AI_TELEGRAM_USER_ID, AI_ALIAS } from "./ai-companion.ts";
 import { applyDetection } from "./bot-detection.ts";
@@ -55,11 +55,15 @@ export function getSupabase() {
   return createClient(url, key);
 }
 
-// ============= PRICING =============
+// ============= PRICING & PAYMENT =============
 const PREMIUM_MONTHLY_IDR = 39_000;
-const PAYMENT_BANK = "BCA";
-const PAYMENT_ACCOUNT = "1234567890";
-const PAYMENT_NAME = "Rizztalk Indonesia";
+// QRIS statis — gambar QRIS Secret Shop (Dana/GoPay/dll)
+// Set env var QRIS_IMAGE_URL ke URL publik gambar QRIS kamu.
+// Contoh: upload ke Supabase Storage → salin URL publik-nya.
+const QRIS_IMAGE_URL = Deno.env.get("QRIS_IMAGE_URL") ??
+  "https://lrhxtsnammweqylqbsuv.supabase.co/storage/v1/object/public/assets/qris.jpg";
+const PAYMENT_MERCHANT = "Secret Shop";
+const PAYMENT_NMID = "ID1026507854309";
 
 const T = {
   welcome: (alias: string) =>
@@ -115,18 +119,22 @@ const T = {
       `• Unban instan (kecuali ban berat)\n` +
       `• Prioritas matching\n\n` +
       `<b>Harga:</b> Rp ${PREMIUM_MONTHLY_IDR.toLocaleString("id-ID")} / bulan${status}\n\n` +
-      `Ketik <code>/upgrade</code> untuk mulai upgrade (transfer manual).`;
+      `💳 Bayar via <b>QRIS</b> (Dana, GoPay, OVO, dll) — ketik <code>/upgrade</code> untuk lihat QR.`;
   },
   upgradeInstructions: (refCode: string) =>
-    `💳 <b>Upgrade Premium</b>\n\n` +
+    `💳 <b>Upgrade Premium — Bayar via QRIS</b>\n\n` +
     `Total: <b>Rp ${PREMIUM_MONTHLY_IDR.toLocaleString("id-ID")}</b>\n` +
-    `Bank: <b>${PAYMENT_BANK}</b>\n` +
-    `No. Rekening: <code>${PAYMENT_ACCOUNT}</code>\n` +
-    `Atas nama: <b>${PAYMENT_NAME}</b>\n` +
+    `Merchant: <b>${PAYMENT_MERCHANT}</b>\n` +
+    `NMID: <code>${PAYMENT_NMID}</code>\n` +
     `Kode unik: <b>${refCode}</b>\n\n` +
-    `<i>Penting:</i> Cantumkan kode <b>${refCode}</b> pada berita transfer agar otomatis terdeteksi admin.\n\n` +
-    `Setelah transfer, kirim bukti (nama pengirim + jam transfer + nominal) sebagai pesan teks. ` +
-    `Verifikasi 1×24 jam.`,
+    `<b>Cara Bayar QRIS:</b>\n` +
+    `1️⃣ Buka aplikasi Dana / GoPay / OVO / m-Banking\n` +
+    `2️⃣ Pilih <b>Scan QR</b> atau <b>Bayar QRIS</b>\n` +
+    `3️⃣ Arahkan kamera ke gambar QR di atas\n` +
+    `4️⃣ Masukkan nominal <b>Rp ${PREMIUM_MONTHLY_IDR.toLocaleString("id-ID")}</b>\n` +
+    `5️⃣ Di kolom catatan / berita bayar, tulis kode: <b>${refCode}</b>\n\n` +
+    `<i>⚠️ Penting: Cantumkan kode <b>${refCode}</b> di catatan transfer agar admin bisa verifikasi.</i>\n\n` +
+    `Setelah bayar, kirim <b>bukti pembayaran</b> (screenshot + nama akun + jam bayar) sebagai pesan teks ke sini. Verifikasi 1×24 jam.`,
   upgradeProofReceived: (refCode: string) =>
     `✅ <b>Bukti transfer diterima!</b>\n\n` +
     `📋 Detail upgrade:\n` +
@@ -628,6 +636,12 @@ async function handleUpgrade(supabase: ReturnType<typeof getSupabase>, profile: 
     if (!hasProof) {
       // Keep step so user can still send proof
       stepByChat.set(profile.telegram_chat_id, { name: "await_payment_proof", referenceCode: refCode });
+      // Re-send QRIS image + instructions
+      await sendPhoto(
+        profile.telegram_chat_id,
+        QRIS_IMAGE_URL,
+        `📷 QRIS untuk pembayaran kode <b>${refCode}</b>`,
+      ).catch((e) => console.error("sendPhoto QRIS failed", e));
       await safeSend(profile.telegram_chat_id, T.upgradeInstructions(refCode));
     }
     return;
@@ -645,6 +659,12 @@ async function handleUpgrade(supabase: ReturnType<typeof getSupabase>, profile: 
     refCode = String(data);
   }
   stepByChat.set(profile.telegram_chat_id, { name: "await_payment_proof", referenceCode: refCode });
+  // Send QRIS photo first, then instructions
+  await sendPhoto(
+    profile.telegram_chat_id,
+    QRIS_IMAGE_URL,
+    `📷 Scan QR ini untuk bayar Premium — kode: <b>${refCode}</b>`,
+  ).catch((e) => console.error("sendPhoto QRIS failed", e));
   await safeSend(profile.telegram_chat_id, T.upgradeInstructions(refCode));
 }
 
@@ -1194,67 +1214,85 @@ async function checkRate(
 
 // ============= /nonai — toggle AI Companion preference =============
 async function handleNoAi(supabase: ReturnType<typeof getSupabase>, profile: Profile) {
-  const newVal = !profile.no_ai;
-  await supabase.from("profiles").update({ no_ai: newVal }).eq("id", profile.id);
-  await safeSend(profile.telegram_chat_id, newVal ? T.nonaiEnabled : T.nonaiDisabled);
+  try {
+    const newVal = !profile.no_ai;
+    const { error } = await supabase.from("profiles").update({ no_ai: newVal }).eq("id", profile.id);
+    if (error) throw error;
+    await safeSend(profile.telegram_chat_id, newVal ? T.nonaiEnabled : T.nonaiDisabled);
+  } catch (e) {
+    console.error("handleNoAi failed", e);
+    await safeSend(
+      profile.telegram_chat_id,
+      `❌ Gagal mengubah pengaturan AI. Pastikan profil kamu sudah lengkap (/profile) dan coba lagi.`,
+    );
+  }
 }
 
 // ============= /ai — show AI Companion status & history =============
 async function handleAiStatus(supabase: ReturnType<typeof getSupabase>, profile: Profile) {
-  const aiProfileId = await ensureAiProfile(supabase);
-  const conv = await getActiveConversation(supabase, profile.id);
-  const isInAiConv = !!conv && (conv.user_a === aiProfileId || conv.user_b === aiProfileId);
+  try {
+    const aiProfileId = await ensureAiProfile(supabase);
+    const conv = await getActiveConversation(supabase, profile.id);
+    const isInAiConv = !!conv && (conv.user_a === aiProfileId || conv.user_b === aiProfileId);
 
-  const noAiLine = profile.no_ai
-    ? `\ud83d\udeab Mode /nonai: <b>Aktif</b> (AI Companion ditolak)`
-    : `\u2705 Mode /nonai: Tidak aktif`;
+    const noAiLine = profile.no_ai
+      ? `\ud83d\udeab Mode /nonai: <b>Aktif</b> (AI Companion ditolak)`
+      : `\u2705 Mode /nonai: Tidak aktif (AI bisa auto-aktif setelah 60 detik)`;
 
-  if (!isInAiConv || !conv) {
+    if (!isInAiConv || !conv) {
+      await safeSend(
+        profile.telegram_chat_id,
+        `\ud83e\udd16 <b>AI Companion Status</b>\n\n` +
+        `\ud83d\udce1 Status: \u274c Tidak aktif\n` +
+        `${noAiLine}\n\n` +
+        `<i>AI Companion akan otomatis aktif jika tidak ada match dalam 60 detik.\n` +
+        `Ketik /nonai untuk menolak AI Companion.</i>`,
+      );
+      return;
+    }
+
+    // Fetch last 5 AI messages in this conversation
+    const { data: aiMessages } = await supabase
+      .from("messages")
+      .select("content, created_at")
+      .eq("conversation_id", conv.id)
+      .eq("sender_id", aiProfileId)
+      .order("created_at", { ascending: false })
+      .limit(5);
+
+    const startedAt = new Date(conv.started_at).toLocaleString("id-ID", { dateStyle: "short", timeStyle: "short" });
+
+    const msgLines = aiMessages && aiMessages.length > 0
+      ? aiMessages
+          .slice()
+          .reverse()
+          .map((m: { content: string; created_at: string }, i: number) => {
+            const t = new Date(m.created_at).toLocaleString("id-ID", { timeStyle: "short" });
+            const snippet = String(m.content).slice(0, 80);
+            const ellipsis = String(m.content).length > 80 ? "\u2026" : "";
+            return `${i + 1}. \u201c${snippet}${ellipsis}\u201d\n   <i>${t}</i>`;
+          })
+          .join("\n")
+      : `<i>Belum ada pesan dari AI.</i>`;
+
     await safeSend(
       profile.telegram_chat_id,
       `\ud83e\udd16 <b>AI Companion Status</b>\n\n` +
-      `\ud83d\udce1 Status: \u274c Tidak aktif\n` +
+      `\ud83d\udce1 Status: \u2705 <b>Aktif</b> (sedang ngobrol dengan AI)\n` +
+      `\u23f0 Mulai menyapa: ${startedAt}\n` +
       `${noAiLine}\n\n` +
-      `<i>AI Companion akan otomatis aktif jika tidak ada match dalam 60 detik.\n` +
-      `Ketik /nonai untuk menolak AI Companion.</i>`,
+      `\ud83d\udcac <b>5 pesan terakhir dari AI:</b>\n${msgLines}\n\n` +
+      `<i>\u2139\ufe0f AI Companion transparan \u2014 bukan manusia.\n` +
+      `Ketik /stop untuk akhiri, /nonai untuk matikan AI.</i>`,
     );
-    return;
+  } catch (e) {
+    console.error("handleAiStatus failed", e);
+    await safeSend(
+      profile.telegram_chat_id,
+      `❌ Gagal mengambil status AI Companion. Coba lagi nanti.\n` +
+      `<i>Jika masalah berlanjut, ketik /stop lalu /cari.</i>`,
+    );
   }
-
-  // Fetch last 5 AI messages in this conversation
-  const { data: aiMessages } = await supabase
-    .from("messages")
-    .select("content, created_at")
-    .eq("conversation_id", conv.id)
-    .eq("sender_id", aiProfileId)
-    .order("created_at", { ascending: false })
-    .limit(5);
-
-  const startedAt = new Date(conv.started_at).toLocaleString("id-ID", { dateStyle: "short", timeStyle: "short" });
-
-  const msgLines = aiMessages && aiMessages.length > 0
-    ? aiMessages
-        .slice()
-        .reverse()
-        .map((m: { content: string; created_at: string }, i: number) => {
-          const t = new Date(m.created_at).toLocaleString("id-ID", { timeStyle: "short" });
-          const snippet = String(m.content).slice(0, 80);
-          const ellipsis = String(m.content).length > 80 ? "\u2026" : "";
-          return `${i + 1}. \u201c${snippet}${ellipsis}\u201d\n   <i>${t}</i>`;
-        })
-        .join("\n")
-    : `<i>Belum ada pesan dari AI.</i>`;
-
-  await safeSend(
-    profile.telegram_chat_id,
-    `\ud83e\udd16 <b>AI Companion Status</b>\n\n` +
-    `\ud83d\udce1 Status: \u2705 <b>Aktif</b> (sedang ngobrol dengan AI)\n` +
-    `\u23f0 Mulai menyapa: ${startedAt}\n` +
-    `${noAiLine}\n\n` +
-    `\ud83d\udcac <b>5 pesan terakhir dari AI:</b>\n${msgLines}\n\n` +
-    `<i>\u2139\ufe0f AI Companion transparan \u2014 bukan manusia.\n` +
-    `Ketik /stop untuk akhiri, /nonai untuk matikan AI.</i>`,
-  );
 }
 
 export async function processUpdate(supabase: ReturnType<typeof getSupabase>, update: TgUpdate) {

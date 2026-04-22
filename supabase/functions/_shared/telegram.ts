@@ -1,4 +1,5 @@
 // Helper untuk panggil Telegram Bot API via Lovable Connector Gateway
+// Mendukung: sendMessage, sendKeyboard, removeKeyboard, sendPhoto, getUpdates
 const GATEWAY_URL = "https://connector-gateway.lovable.dev/telegram";
 
 function getKeys() {
@@ -92,6 +93,30 @@ export async function safeSend(chatId: number | null | undefined, text: string):
   } catch (err) {
     console.error(`safeSend to ${chatId} failed: ${err instanceof Error ? err.message : err}`);
     return false;
+  }
+}
+
+// Kirim foto (gambar QRIS) ke chat. `photo` bisa berupa URL publik atau file_id Telegram.
+export async function sendPhoto(
+  chatId: number,
+  photo: string,
+  caption = "",
+  opts: Record<string, unknown> = {},
+) {
+  try {
+    return await tgFetch("/sendPhoto", {
+      chat_id: chatId,
+      photo,
+      ...(caption ? { caption, parse_mode: "HTML" } : {}),
+      ...opts,
+    });
+  } catch (err) {
+    // Fallback: kirim caption saja jika foto gagal
+    console.error(`sendPhoto failed, falling back to text: ${err instanceof Error ? err.message : err}`);
+    if (caption) {
+      return sendMessage(chatId, caption);
+    }
+    throw err;
   }
 }
 
