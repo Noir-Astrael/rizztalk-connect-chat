@@ -30,6 +30,7 @@ type Profile = {
   premium_until?: string | null;
   is_banned_until: string | null;
   onboarding_completed: boolean;
+  no_ai: boolean;
 };
 
 type Step =
@@ -76,18 +77,23 @@ const T = {
     `/block — blokir lawan chat agar tidak di-match lagi\n` +
     `/me — lihat profil & riwayat trust score kamu\n` +
     `/premium — upgrade premium\n` +
+    `/nonai — tolak AI Companion, hanya match manusia\n` +
+    `/ai — status AI Companion & riwayat 5 pesan AI\n` +
     `/help — bantuan\n\n` +
     `<i>💡 Jika tidak ada user nyata dalam 60 detik, AI Companion akan menyapa kamu (transparan, akan diberi tahu).</i>`,
   needOnboarding: `⚠️ Profil kamu belum lengkap. Ketik /profile dulu.`,
   bannedUntil: (until: string) => `🚫 Akun kamu sedang di-ban sampai <b>${until}</b>. Ketik /premium untuk info unban.`,
-  searching: (sameProv: boolean, provName: string | null, filter: TrustFilter = "any") => {
+  searching: (sameProv: boolean, provName: string | null, filter: TrustFilter = "any", noAi = false) => {
     const base = sameProv
       ? `🔎 Mencari teman ngobrol dari <b>${provName}</b>…`
       : `🔎 Mencari teman ngobrol…`;
-    const note = `\n<i>Tunggu hingga 60 detik. Jika sepi, AI Companion akan menyapa.</i>`;
+    const note = noAi
+      ? `\n<i>⚠️ Mode /nonai aktif — AI Companion dimatikan. Kamu hanya akan di-match dengan manusia nyata.</i>`
+      : `\n<i>Tunggu hingga 60 detik. Jika sepi, AI Companion akan menyapa.</i>`;
     return filter === "any" ? base + note : `${base}\n<i>Filter trust: ${trustFilterLabel(filter)} (otomatis dilonggarkan jika menunggu lama).</i>${note}`;
   },
   inQueue: `⏳ Kamu sudah di antrean. Tunggu sebentar… (max 60 detik sebelum AI Companion aktif)`,
+  inQueueNoAi: `⏳ Kamu sudah di antrean (mode /nonai aktif). Hanya menunggu manusia nyata — tidak ada AI fallback.`,
   alreadyChatting: `💬 Kamu sedang dalam obrolan. Ketik /stop untuk mengakhiri.`,
   matchFound: (alias: string, provName: string, sameProv: boolean) => {
     const banner = sameProv
@@ -122,8 +128,21 @@ const T = {
     `Setelah transfer, kirim bukti (nama pengirim + jam transfer + nominal) sebagai pesan teks. ` +
     `Verifikasi 1×24 jam.`,
   upgradeProofReceived: (refCode: string) =>
-    `✅ Bukti tercatat untuk kode <b>${refCode}</b>. Admin akan verifikasi 1×24 jam.\n` +
-    `Kamu akan otomatis dapat status premium begitu disetujui.`,
+    `✅ <b>Bukti transfer diterima!</b>\n\n` +
+    `📋 Detail upgrade:\n` +
+    `• Kode unik: <code>${refCode}</code>\n` +
+    `• Status: ⏳ <b>Menunggu verifikasi admin</b>\n` +
+    `• Perkiraan: 1×24 jam\n\n` +
+    `<i>Kamu akan menerima notifikasi otomatis setelah admin menyetujui atau menolak.</i>`,
+  upgradeAlreadyPending: (refCode: string, hasProof: boolean) =>
+    `📋 <b>Status upgrade kamu:</b>\n\n` +
+    `• Kode unik: <code>${refCode}</code>\n` +
+    `• Bukti: ${hasProof ? `✅ Sudah dikirim` : `❌ Belum dikirim`}\n` +
+    `• Status: ⏳ Menunggu verifikasi\n` +
+    `• Perkiraan: 1×24 jam\n\n` +
+    (hasProof
+      ? `<i>Admin sedang memproses. Kamu akan diberi tahu segera.</i>`
+      : `Kirim bukti transfer (nama pengirim + jam + nominal) sebagai pesan teks sekarang.`),
   rateLimited: (bucket: string, sec: number) =>
     `⏱️ Tunggu sebentar — kamu terlalu cepat (${bucket}). Coba lagi dalam ~${sec}s.`,
   reportNoChat: `ℹ️ Kamu tidak sedang ngobrol. /report hanya bisa dipakai saat chat aktif.`,
@@ -178,7 +197,8 @@ const T = {
   trustSummary: (delta: number, newScore: number, reason: string) => {
     const sign = delta > 0 ? "+" : "";
     const emoji = delta > 0 ? "📈" : delta < 0 ? "📉" : "➖";
-    return `${emoji} <b>Trust score</b>: ${sign}${delta} → <b>${newScore}</b>\n<i>${reason}</i>`;
+    const badge = trustLabel(newScore);
+    return `${emoji} <b>Trust score</b>: ${sign}${delta} → <b>${newScore}</b> — ${badge}\n<i>${reason}</i>`;
   },
   reportSummaryReporter: (newScore: number) =>
     `✅ <b>Laporan terverifikasi & tercatat.</b>\n` +
@@ -203,15 +223,25 @@ const T = {
   invalidAlias: `❌ Alias harus 3–20 karakter.`,
   invalidProvince: `❌ Provinsi tidak ditemukan. Coba lagi (mis. "Jawa Barat"):`,
   premiumOnlyGenderFilter: `⭐ Filter gender hanya untuk Premium. Preferensi diset ke "any".`,
-  detectionWarning: (reason: string, banned: boolean) =>
-    banned
-      ? `🚫 <b>Akun di-ban 24 jam.</b>\nAlasan: <i>${reason}</i>\nKetik /premium untuk info banding.`
-      : `⚠️ <b>Pesan kamu ditandai sistem.</b>\nAlasan: <i>${reason}</i>\nTrust −10. Hindari spam, link, scam, atau pelecehan.`,
+  detectionWarning: (reason: string, banned: boolean, newScore: number) => {
+    const badge = trustLabel(newScore);
+    return banned
+      ? `🚫 <b>Akun di-ban 24 jam.</b>\nAlasan: <i>${reason}</i>\n📉 Trust: <b>${newScore}</b> — ${badge}\nKetik /premium untuk info banding.`
+      : `⚠️ <b>Pesan kamu ditandai sistem.</b>\nAlasan: <i>${reason}</i>\n📉 Trust −10 → <b>${newScore}</b> — ${badge}\nHindari spam, link, scam, atau pelecehan.`;
+  },
   partnerSanctioned: (banned: boolean) =>
     banned
       ? `🚫 Lawan bicara di-ban karena melanggar aturan. Sesi diakhiri otomatis.`
       : `⚠️ Lawan bicara ditandai sistem. Tetap waspada.`,
   contentBlocked: `❌ Pesan tidak terkirim — mengandung konten yang tidak diizinkan.`,
+  nonaiEnabled:
+    `🚫 <b>AI Companion dinonaktifkan.</b>\n` +
+    `Kamu hanya akan di-match dengan manusia nyata.\n` +
+    `<i>⚠️ Jika tidak ada user aktif, kamu akan menunggu lebih lama tanpa fallback AI.</i>\n\n` +
+    `Ketik /nonai lagi untuk mengaktifkan AI kembali.`,
+  nonaiDisabled:
+    `✅ <b>AI Companion diaktifkan kembali.</b>\n` +
+    `Jika tidak ada match dalam 60 detik, AI Companion akan menyapa kamu.`,
 };
 
 export type TrustEventRow = {
@@ -582,7 +612,7 @@ async function handleUpgrade(supabase: ReturnType<typeof getSupabase>, profile: 
   // Check pending request
   const { data: pending } = await supabase
     .from("payment_requests")
-    .select("reference_code")
+    .select("reference_code, proof_note")
     .eq("profile_id", profile.id)
     .eq("status", "pending")
     .order("created_at", { ascending: false })
@@ -592,6 +622,15 @@ async function handleUpgrade(supabase: ReturnType<typeof getSupabase>, profile: 
   let refCode: string;
   if (pending) {
     refCode = pending.reference_code;
+    const hasProof = !!(pending.proof_note && pending.proof_note.trim().length > 0);
+    // Show existing pending status
+    await safeSend(profile.telegram_chat_id, T.upgradeAlreadyPending(refCode, hasProof));
+    if (!hasProof) {
+      // Keep step so user can still send proof
+      stepByChat.set(profile.telegram_chat_id, { name: "await_payment_proof", referenceCode: refCode });
+      await safeSend(profile.telegram_chat_id, T.upgradeInstructions(refCode));
+    }
+    return;
   } else {
     const { data, error } = await supabase.rpc("request_premium_upgrade", {
       _profile_id: profile.id,
@@ -627,11 +666,11 @@ async function handleCari(
     await sendMessage(profile.telegram_chat_id, T.alreadyChatting);
     return;
   }
-  await sendMessage(profile.telegram_chat_id, T.searching(true, profile.province_name, trustFilter));
+  await sendMessage(profile.telegram_chat_id, T.searching(true, profile.province_name, trustFilter, profile.no_ai));
 
   const result = await tryMatch(supabase, profile, trustFilter);
   if (!result) {
-    await sendMessage(profile.telegram_chat_id, T.inQueue);
+    await sendMessage(profile.telegram_chat_id, profile.no_ai ? T.inQueueNoAi : T.inQueue);
     return;
   }
 
@@ -812,7 +851,9 @@ async function handleAdmin(
         `/admin approve &lt;ref&gt; [days] — approve payment\n` +
         `/admin reject &lt;ref&gt; [note] — reject payment\n` +
         `/admin stats — statistik global\n` +
-        `/admin unban &lt;telegram_user_id&gt; — unban user`,
+        `/admin unban &lt;telegram_user_id&gt; — unban user\n` +
+        `/admin bot-signals [tg_id] — bot/spam/scam signals per user\n` +
+        `/admin unban-signal &lt;signal_id&gt; — batalkan false-positive ban`,
     );
     return;
   }
@@ -891,6 +932,69 @@ async function handleAdmin(
     await supabase.from("profiles").update({ is_banned_until: null, ban_reason: null }).eq("id", target.id);
     await safeSend(target.telegram_chat_id, "✅ Akun kamu di-unban oleh admin.");
     await sendMessage(profile.telegram_chat_id, `✅ Unbanned tg=${tgId}`);
+    return;
+  }
+  if (sub === "bot-signals") {
+    const tgId = args[1] ? parseInt(args[1], 10) : null;
+    let query = supabase
+      .from("bot_signals")
+      .select("id, profile_id, signal_type, score, details, created_at, profiles!inner(alias, telegram_user_id, trust_score, is_banned_until)")
+      .order("created_at", { ascending: false })
+      .limit(15);
+    if (tgId) {
+      const { data: tgProfile } = await supabase.from("profiles").select("id").eq("telegram_user_id", tgId).maybeSingle();
+      if (!tgProfile) { await sendMessage(profile.telegram_chat_id, "❌ User tidak ditemukan."); return; }
+      query = query.eq("profile_id", tgProfile.id);
+    }
+    const { data: signals } = await query;
+    if (!signals || signals.length === 0) {
+      await sendMessage(profile.telegram_chat_id, "✅ Tidak ada bot signals.");
+      return;
+    }
+    const lines = signals.map((s: any) => {
+      const p = s.profiles;
+      const scoreVal = Number(s.score).toFixed(2);
+      const scoreEmoji = s.score >= 0.85 ? "🔴" : s.score >= 0.5 ? "🟡" : "🟢";
+      const det = s.details ?? {};
+      const aiReason = det.ai?.reason ?? "";
+      const behReasons = (det.behavioral?.reasons ?? []).join(", ");
+      const reason = aiReason || behReasons || "-";
+      const isBanned = p.is_banned_until && new Date(p.is_banned_until) > new Date();
+      const impact = isBanned ? `trust −10, banned` : `trust −10`;
+      const cancelled = det.cancelled ? " [DIBATALKAN]" : "";
+      const t = new Date(s.created_at).toLocaleString("id-ID", { dateStyle: "short", timeStyle: "short" });
+      return `${scoreEmoji} Score: <b>${scoreVal}</b> · ${s.signal_type}${cancelled}\n` +
+        `👤 ${p.alias} (tg=${p.telegram_user_id}) · trust=${p.trust_score}\n` +
+        `📝 ${reason}\n` +
+        `⚡ Dampak: ${impact}\n` +
+        `🆔 <code>${s.id}</code>\n` +
+        `📅 ${t}`;
+    });
+    await sendMessage(profile.telegram_chat_id,
+      `<b>🛡️ Bot Signals (${signals.length})</b>\n\n${lines.join("\n\n")}`);
+    return;
+  }
+  if (sub === "unban-signal") {
+    const signalId = args[1];
+    if (!signalId) { await sendMessage(profile.telegram_chat_id, "Usage: /admin unban-signal &lt;signal_id&gt;"); return; }
+    const { data: ok, error: rpcErr } = await supabase.rpc("admin_cancel_bot_signal", {
+      _signal_id: signalId,
+      _admin_id: profile.id,
+    });
+    if (rpcErr || !ok) {
+      await sendMessage(profile.telegram_chat_id, `❌ Gagal: ${rpcErr?.message ?? "Signal tidak ditemukan atau sudah diproses."}`);
+      return;
+    }
+    // Notify the affected user
+    const { data: sig } = await supabase.from("bot_signals").select("profile_id").eq("id", signalId).maybeSingle();
+    if (sig) {
+      const { data: u } = await supabase.from("profiles").select("telegram_chat_id, trust_score").eq("id", sig.profile_id).single();
+      if (u) await safeSend(u.telegram_chat_id,
+        `✅ <b>Deteksi otomatis dibatalkan oleh admin.</b>\n` +
+        `Trust kamu dipulihkan +10 → <b>${u.trust_score}</b>.\n` +
+        `Ban jika ada telah dihapus.`);
+    }
+    await sendMessage(profile.telegram_chat_id, `✅ Signal <code>${signalId}</code> dibatalkan. User di-unban & trust +10.`);
     return;
   }
   await sendMessage(profile.telegram_chat_id, "Subcommand tidak dikenal. /admin tanpa argumen untuk lihat daftar.");
@@ -1088,6 +1192,71 @@ async function checkRate(
   return !!data;
 }
 
+// ============= /nonai — toggle AI Companion preference =============
+async function handleNoAi(supabase: ReturnType<typeof getSupabase>, profile: Profile) {
+  const newVal = !profile.no_ai;
+  await supabase.from("profiles").update({ no_ai: newVal }).eq("id", profile.id);
+  await safeSend(profile.telegram_chat_id, newVal ? T.nonaiEnabled : T.nonaiDisabled);
+}
+
+// ============= /ai — show AI Companion status & history =============
+async function handleAiStatus(supabase: ReturnType<typeof getSupabase>, profile: Profile) {
+  const aiProfileId = await ensureAiProfile(supabase);
+  const conv = await getActiveConversation(supabase, profile.id);
+  const isInAiConv = !!conv && (conv.user_a === aiProfileId || conv.user_b === aiProfileId);
+
+  const noAiLine = profile.no_ai
+    ? `\ud83d\udeab Mode /nonai: <b>Aktif</b> (AI Companion ditolak)`
+    : `\u2705 Mode /nonai: Tidak aktif`;
+
+  if (!isInAiConv || !conv) {
+    await safeSend(
+      profile.telegram_chat_id,
+      `\ud83e\udd16 <b>AI Companion Status</b>\n\n` +
+      `\ud83d\udce1 Status: \u274c Tidak aktif\n` +
+      `${noAiLine}\n\n` +
+      `<i>AI Companion akan otomatis aktif jika tidak ada match dalam 60 detik.\n` +
+      `Ketik /nonai untuk menolak AI Companion.</i>`,
+    );
+    return;
+  }
+
+  // Fetch last 5 AI messages in this conversation
+  const { data: aiMessages } = await supabase
+    .from("messages")
+    .select("content, created_at")
+    .eq("conversation_id", conv.id)
+    .eq("sender_id", aiProfileId)
+    .order("created_at", { ascending: false })
+    .limit(5);
+
+  const startedAt = new Date(conv.started_at).toLocaleString("id-ID", { dateStyle: "short", timeStyle: "short" });
+
+  const msgLines = aiMessages && aiMessages.length > 0
+    ? aiMessages
+        .slice()
+        .reverse()
+        .map((m: { content: string; created_at: string }, i: number) => {
+          const t = new Date(m.created_at).toLocaleString("id-ID", { timeStyle: "short" });
+          const snippet = String(m.content).slice(0, 80);
+          const ellipsis = String(m.content).length > 80 ? "\u2026" : "";
+          return `${i + 1}. \u201c${snippet}${ellipsis}\u201d\n   <i>${t}</i>`;
+        })
+        .join("\n")
+    : `<i>Belum ada pesan dari AI.</i>`;
+
+  await safeSend(
+    profile.telegram_chat_id,
+    `\ud83e\udd16 <b>AI Companion Status</b>\n\n` +
+    `\ud83d\udce1 Status: \u2705 <b>Aktif</b> (sedang ngobrol dengan AI)\n` +
+    `\u23f0 Mulai menyapa: ${startedAt}\n` +
+    `${noAiLine}\n\n` +
+    `\ud83d\udcac <b>5 pesan terakhir dari AI:</b>\n${msgLines}\n\n` +
+    `<i>\u2139\ufe0f AI Companion transparan \u2014 bukan manusia.\n` +
+    `Ketik /stop untuk akhiri, /nonai untuk matikan AI.</i>`,
+  );
+}
+
 export async function processUpdate(supabase: ReturnType<typeof getSupabase>, update: TgUpdate) {
   const msg = update.message;
   if (!msg || !msg.from || !msg.text) return;
@@ -1166,6 +1335,8 @@ export async function processUpdate(supabase: ReturnType<typeof getSupabase>, up
       case "/premium": return handlePremium(profile);
       case "/upgrade": return handleUpgrade(supabase, profile);
       case "/admin": return handleAdmin(supabase, profile, parts.slice(1));
+      case "/nonai": return handleNoAi(supabase, profile);
+      case "/ai": return handleAiStatus(supabase, profile);
       default:
         await sendMessage(profile.telegram_chat_id, `Perintah tidak dikenal. Ketik /help.`);
         return;
@@ -1200,7 +1371,8 @@ export async function processUpdate(supabase: ReturnType<typeof getSupabase>, up
   });
 
   if (detection.flagged) {
-    await safeSend(profile.telegram_chat_id, T.detectionWarning(detection.reason, detection.banned));
+    const penaltyScore = Math.max(0, profile.trust_score - 10);
+    await safeSend(profile.telegram_chat_id, T.detectionWarning(detection.reason, detection.banned, penaltyScore));
     if (partner.telegram_user_id !== AI_TELEGRAM_USER_ID) {
       await safeSend(partner.telegram_chat_id, T.partnerSanctioned(detection.banned));
     }

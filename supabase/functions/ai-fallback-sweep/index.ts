@@ -52,10 +52,24 @@ Deno.serve(async (req) => {
 
       const { data: profile } = await supabase
         .from("profiles")
-        .select("telegram_chat_id, alias, province_name")
+        .select("telegram_chat_id, alias, province_name, no_ai")
         .eq("id", w.profile_id)
         .single();
       if (!profile) continue;
+
+      // Respect /nonai preference — skip AI matching, send transparency notice every ~5 min
+      if (profile.no_ai) {
+        // Only send one reminder (when they've been waiting exactly ~60s, i.e. first sweep)
+        const waitSec = (Date.now() - new Date(w.joined_at).getTime()) / 1000;
+        if (waitSec < 120) {
+          await safeSend(
+            profile.telegram_chat_id,
+            `\u23f3 Belum ada user nyata yang cocok.\n` +
+            `<i>Kamu sudah pilih /nonai \u2014 tetap di antrean, hanya menunggu manusia. Tidak ada AI fallback.</i>`,
+          );
+        }
+        continue;
+      }
 
       const { data: conv } = await supabase
         .from("conversations")
@@ -73,16 +87,16 @@ Deno.serve(async (req) => {
       await supabase.from("match_queue").delete().eq("profile_id", w.profile_id);
 
       const banner =
-        `🤖 <b>${AI_ALIAS} aktif.</b>\n` +
+        `\ud83e\udd16 <b>${AI_ALIAS} aktif.</b>\n` +
         `<i>Belum ada user nyata yang cocok dalam 60 detik. Kamu sedang ngobrol dengan AI Companion (transparan, bukan manusia).</i>\n\n` +
         `Ketik /stop kapan saja untuk keluar dan coba cari user nyata lagi.\n\n` +
-        `Hai ${profile.alias}! 👋 Lagi ngapain nih hari ini?`;
+        `Hai ${profile.alias}! \ud83d\udc4b Lagi ngapain nih hari ini?`;
       await safeSend(profile.telegram_chat_id, banner);
 
       await supabase.from("messages").insert({
         conversation_id: conv.id,
         sender_id: aiId,
-        content: `Hai ${profile.alias}! 👋 Lagi ngapain nih hari ini?`,
+        content: `Hai ${profile.alias}! \ud83d\udc4b Lagi ngapain nih hari ini?`,
       });
 
       matched++;
