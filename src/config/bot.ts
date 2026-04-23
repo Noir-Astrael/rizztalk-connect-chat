@@ -1,5 +1,5 @@
-// Konfigurasi bot — ganti BOT_USERNAME dengan username bot kamu dari @BotFather
-// Contoh: jika bot kamu @RizztalkBot, set ke "RizztalkBot"
-export const BOT_USERNAME = "RizzTalk";
+// Konfigurasi bot — sesuai dengan username bot di @BotFather
+// Bot Telegram: @RizzTalk_bot
+export const BOT_USERNAME = "RizzTalk_bot";
 export const BOT_URL = `https://t.me/${BOT_USERNAME}`;
 export const BOT_START_URL = `${BOT_URL}?start=web`;

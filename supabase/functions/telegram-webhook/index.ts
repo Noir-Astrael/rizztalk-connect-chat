@@ -22,7 +22,7 @@ Deno.serve(async (req) => {
     }
   }
 
-  let update: any;
+  let update: Record<string, unknown>;
   try {
     update = await req.json();
   } catch {
@@ -31,9 +31,9 @@ Deno.serve(async (req) => {
 
   // ACK Telegram quickly, process in background (non-blocking)
   const supabase = getSupabase();
-  // @ts-ignore EdgeRuntime is provided by Supabase Edge runtime
+  // @ts-expect-error EdgeRuntime is provided by Supabase Edge runtime
   const bg = (typeof EdgeRuntime !== "undefined" && EdgeRuntime?.waitUntil)
-    // @ts-ignore
+    // @ts-expect-error provided by env
     ? EdgeRuntime.waitUntil
     : (p: Promise<unknown>) => p;
 

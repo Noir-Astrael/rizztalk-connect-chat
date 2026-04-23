@@ -31,6 +31,8 @@ type Profile = {
   is_banned_until: string | null;
   onboarding_completed: boolean;
   no_ai: boolean;
+  onboarding_step?: string | null;
+  pending_payment_ref?: string | null;
 };
 
 type Step =
@@ -43,7 +45,43 @@ type Step =
   | { name: "set_gender_pref" }
   | { name: "await_report_reason"; conversationId: string; reportedId: string }
   | { name: "await_payment_proof"; referenceCode: string };
+
+// In-memory step cache (for same invocation performance);
+// authoritative state is persisted to DB (profiles.onboarding_step + pending_payment_ref)
 const stepByChat = new Map<number, Step>();
+
+async function persistStep(supabase: ReturnType<typeof getSupabase>, chatId: number, step: Step) {
+  stepByChat.set(chatId, step);
+  const stepName = step.name;
+  const paymentRef = step.name === "await_payment_proof" ? step.referenceCode : null;
+  // Store in report_reason steps as idle (report is single-message flow)
+  const dbStep = step.name === "await_report_reason" ? "idle" : stepName;
+  await supabase
+    .from("profiles")
+    .update({ onboarding_step: dbStep, pending_payment_ref: paymentRef })
+    .eq("telegram_chat_id", chatId);
+}
+
+async function loadStep(supabase: ReturnType<typeof getSupabase>, chatId: number, profile: { onboarding_step?: string | null; pending_payment_ref?: string | null }): Promise<Step> {
+  const cached = stepByChat.get(chatId);
+  if (cached) return cached;
+  // Restore from DB (handles cold-start)
+  const dbStep = profile.onboarding_step;
+  if (!dbStep || dbStep === "idle" || dbStep === "set_gender_pref") return { name: "idle" };
+  if (dbStep === "await_payment_proof" && profile.pending_payment_ref) {
+    const step: Step = { name: "await_payment_proof", referenceCode: profile.pending_payment_ref };
+    stepByChat.set(chatId, step);
+    return step;
+  }
+  const validSteps = ["set_alias", "set_gender", "set_province", "set_interests", "set_bio"] as const;
+  type ValidStep = typeof validSteps[number];
+  if (validSteps.includes(dbStep as ValidStep)) {
+    const step: Step = { name: dbStep as ValidStep };
+    stepByChat.set(chatId, step);
+    return step;
+  }
+  return { name: "idle" };
+}
 
 // Per-conversation message counter (for AI classifier sampling)
 const msgCountByConv = new Map<string, number>();
@@ -57,20 +95,51 @@ export function getSupabase() {
 
 // ============= PRICING & PAYMENT =============
 const PREMIUM_MONTHLY_IDR = 39_000;
-// QRIS statis — gambar QRIS Secret Shop (Dana/GoPay/dll)
-// Set env var QRIS_IMAGE_URL ke URL publik gambar QRIS kamu.
-// Contoh: upload ke Supabase Storage → salin URL publik-nya.
+// QRIS statis — set env var QRIS_IMAGE_URL di Supabase Dashboard > Edge Functions > Secrets
 const QRIS_IMAGE_URL = Deno.env.get("QRIS_IMAGE_URL") ??
   "https://lrhxtsnammweqylqbsuv.supabase.co/storage/v1/object/public/assets/qris.jpg";
-const PAYMENT_MERCHANT = "Secret Shop";
-const PAYMENT_NMID = "ID1026507854309";
+const PAYMENT_MERCHANT = Deno.env.get("PAYMENT_MERCHANT") ?? "Secret Shop";
+const PAYMENT_NMID = Deno.env.get("PAYMENT_NMID") ?? "ID1026507854309";
+
+// ============= HTML ESCAPE (untuk forward pesan antar user) =============
+// Escapes user-generated text sebelum dikirim via Telegram HTML mode.
+// Mencegah HTML injection dari pesan pengguna yang di-forward.
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
 
 const T = {
   welcome: (alias: string) =>
-    `👋 Halo <b>${alias}</b>! Selamat datang di <b>Rizztalk</b> — random chat anonim untuk Indonesia.\n\n` +
-    `Sebelum mulai, lengkapi profil dulu dengan /profile.\n\nKetik /help untuk lihat semua perintah.`,
+    `👋 Halo <b>${alias}</b>! Selamat datang di <b>RizzTalk</b> — random chat anonim untuk Indonesia.\n\n` +
+    `Berikut semua perintah yang tersedia:`,
+  startCommandList:
+    `<b>📋 Daftar Perintah RizzTalk</b>\n\n` +
+    `🚀 <b>Mulai</b>\n` +
+    `/start — mulai / lihat status\n` +
+    `/profile — atur profil (gender, lokasi, minat, bio)\n\n` +
+    `💬 <b>Chat</b>\n` +
+    `/cari — cari teman ngobrol baru\n` +
+    `/cari normal — filter trust ≥60\n` +
+    `/cari terpercaya — filter trust ≥90\n` +
+    `/cari sangat_terpercaya — filter trust ≥120\n` +
+    `/stop — akhiri obrolan / keluar antrean\n\n` +
+    `🛡️ <b>Keamanan</b>\n` +
+    `/report — laporkan lawan chat (spam/asusila/bot/scam)\n` +
+    `/block — blokir lawan chat agar tidak di-match lagi\n\n` +
+    `👤 <b>Profil & Premium</b>\n` +
+    `/me — lihat profil & riwayat trust score kamu\n` +
+    `/premium — info fitur premium\n` +
+    `/upgrade — upgrade premium via QRIS\n\n` +
+    `🤖 <b>AI Companion</b>\n` +
+    `/nonai — tolak AI Companion, hanya match manusia\n` +
+    `/ai — status AI Companion & riwayat 5 pesan AI\n\n` +
+    `/help — tampilkan bantuan ini lagi\n\n` +
+    `<i>💡 Jika tidak ada user nyata dalam 60 detik, AI Companion akan menyapa kamu secara transparan.</i>`,
   help:
-    `<b>Perintah Rizztalk</b>\n\n` +
+    `<b>Perintah RizzTalk</b>\n\n` +
     `/start — mulai / lihat status\n` +
     `/profile — atur profil (gender, lokasi, minat, bio)\n` +
     `/cari [filter] — cari teman ngobrol baru\n` +
@@ -81,6 +150,7 @@ const T = {
     `/block — blokir lawan chat agar tidak di-match lagi\n` +
     `/me — lihat profil & riwayat trust score kamu\n` +
     `/premium — upgrade premium\n` +
+    `/upgrade — lihat QRIS & instruksi bayar\n` +
     `/nonai — tolak AI Companion, hanya match manusia\n` +
     `/ai — status AI Companion & riwayat 5 pesan AI\n` +
     `/help — bantuan\n\n` +
@@ -571,14 +641,16 @@ async function tryMatch(
 
 async function handleStart(supabase: ReturnType<typeof getSupabase>, profile: Profile) {
   await sendMessage(profile.telegram_chat_id, T.welcome(profile.alias));
+  // Send full command list so user knows all available commands
+  await sendMessage(profile.telegram_chat_id, T.startCommandList);
   if (!profile.onboarding_completed) {
-    stepByChat.set(profile.telegram_chat_id, { name: "set_alias" });
+    await persistStep(supabase, profile.telegram_chat_id, { name: "set_alias" });
     await sendMessage(profile.telegram_chat_id, T.promptAlias);
   }
 }
 
-async function handleProfileStart(profile: Profile) {
-  stepByChat.set(profile.telegram_chat_id, { name: "set_alias" });
+async function handleProfileStart(supabase: ReturnType<typeof getSupabase>, profile: Profile) {
+  await persistStep(supabase, profile.telegram_chat_id, { name: "set_alias" });
   await sendMessage(profile.telegram_chat_id, T.promptAlias);
 }
 
@@ -635,7 +707,7 @@ async function handleUpgrade(supabase: ReturnType<typeof getSupabase>, profile: 
     await safeSend(profile.telegram_chat_id, T.upgradeAlreadyPending(refCode, hasProof));
     if (!hasProof) {
       // Keep step so user can still send proof
-      stepByChat.set(profile.telegram_chat_id, { name: "await_payment_proof", referenceCode: refCode });
+      await persistStep(supabase, profile.telegram_chat_id, { name: "await_payment_proof", referenceCode: refCode });
       // Re-send QRIS image + instructions
       await sendPhoto(
         profile.telegram_chat_id,
@@ -658,7 +730,7 @@ async function handleUpgrade(supabase: ReturnType<typeof getSupabase>, profile: 
     }
     refCode = String(data);
   }
-  stepByChat.set(profile.telegram_chat_id, { name: "await_payment_proof", referenceCode: refCode });
+  await persistStep(supabase, profile.telegram_chat_id, { name: "await_payment_proof", referenceCode: refCode });
   // Send QRIS photo first, then instructions
   await sendPhoto(
     profile.telegram_chat_id,
@@ -792,7 +864,7 @@ async function handleReport(supabase: ReturnType<typeof getSupabase>, profile: P
     await sendMessage(profile.telegram_chat_id, "ℹ️ Kamu sedang dengan AI Companion. Untuk feedback AI, ketik /stop saja.");
     return;
   }
-  stepByChat.set(profile.telegram_chat_id, {
+  await persistStep(supabase, profile.telegram_chat_id, {
     name: "await_report_reason",
     conversationId: conv.id,
     reportedId,
@@ -971,6 +1043,7 @@ async function handleAdmin(
       await sendMessage(profile.telegram_chat_id, "✅ Tidak ada bot signals.");
       return;
     }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const lines = signals.map((s: any) => {
       const p = s.profiles;
       const scoreVal = Number(s.score).toFixed(2);
@@ -1035,7 +1108,7 @@ async function handleStepInput(
       return true;
     }
     await supabase.from("profiles").update({ alias }).eq("id", profile.id);
-    stepByChat.set(profile.telegram_chat_id, { name: "set_gender" });
+    await persistStep(supabase, profile.telegram_chat_id, { name: "set_gender" });
     await sendKeyboard(profile.telegram_chat_id, T.promptGender, [["Pria", "Wanita", "Lainnya"]]);
     return true;
   }
@@ -1052,7 +1125,7 @@ async function handleStepInput(
       return true;
     }
     await supabase.from("profiles").update({ gender: g }).eq("id", profile.id);
-    stepByChat.set(profile.telegram_chat_id, { name: "set_province" });
+    await persistStep(supabase, profile.telegram_chat_id, { name: "set_province" });
     await removeKeyboard(profile.telegram_chat_id, T.promptProvince);
     return true;
   }
@@ -1064,7 +1137,7 @@ async function handleStepInput(
       return true;
     }
     await supabase.from("profiles").update({ province_code: prov.code, province_name: prov.name }).eq("id", profile.id);
-    stepByChat.set(profile.telegram_chat_id, { name: "set_interests" });
+    await persistStep(supabase, profile.telegram_chat_id, { name: "set_interests" });
     const current = await getInterests(supabase, profile.id);
     await sendMessage(profile.telegram_chat_id, T.promptInterests(current));
     return true;
@@ -1084,7 +1157,7 @@ async function handleStepInput(
         await supabase.from("user_interests").insert(rows);
       }
     }
-    stepByChat.set(profile.telegram_chat_id, { name: "set_bio" });
+    await persistStep(supabase, profile.telegram_chat_id, { name: "set_bio" });
     await sendMessage(profile.telegram_chat_id, T.promptBio);
     return true;
   }
@@ -1094,7 +1167,7 @@ async function handleStepInput(
       const bio = text.trim().slice(0, 200);
       await supabase.from("profiles").update({ bio }).eq("id", profile.id);
     }
-    await supabase.from("profiles").update({ onboarding_completed: true }).eq("id", profile.id);
+    await supabase.from("profiles").update({ onboarding_completed: true, onboarding_step: null, pending_payment_ref: null }).eq("id", profile.id);
     stepByChat.set(profile.telegram_chat_id, { name: "idle" });
     const updated = await getProfileById(supabase, profile.id);
     const interests = await getInterests(supabase, profile.id);
@@ -1113,7 +1186,7 @@ async function handleStepInput(
       .update({ proof_note: proof, updated_at: new Date().toISOString() })
       .eq("reference_code", step.referenceCode)
       .eq("status", "pending");
-    stepByChat.set(profile.telegram_chat_id, { name: "idle" });
+    await persistStep(supabase, profile.telegram_chat_id, { name: "idle" });
     await safeSend(profile.telegram_chat_id, T.upgradeProofReceived(step.referenceCode));
     return true;
   }
@@ -1145,7 +1218,7 @@ async function handleStepInput(
       .maybeSingle();
 
     if (existing) {
-      stepByChat.set(profile.telegram_chat_id, { name: "idle" });
+      await persistStep(supabase, profile.telegram_chat_id, { name: "idle" });
       await removeKeyboard(profile.telegram_chat_id, T.reportAlready);
       return true;
     }
@@ -1176,7 +1249,7 @@ async function handleStepInput(
       await endConversation(supabase, conv, profile.id);
     }
 
-    stepByChat.set(profile.telegram_chat_id, { name: "idle" });
+    await persistStep(supabase, profile.telegram_chat_id, { name: "idle" });
 
     try { await removeKeyboard(profile.telegram_chat_id, T.reportSuccess); }
     catch (e) { console.error("removeKeyboard failed", e); await safeSend(profile.telegram_chat_id, T.reportSuccess); }
@@ -1355,13 +1428,13 @@ export async function processUpdate(supabase: ReturnType<typeof getSupabase>, up
     // Don't reset step for /cari if we're in a flow (e.g. payment proof)
     const currentStep = stepByChat.get(profile.telegram_chat_id);
     if (cmd !== "/help" && cmd !== "/me" && currentStep?.name !== "await_payment_proof") {
-      stepByChat.set(profile.telegram_chat_id, { name: "idle" });
+      await persistStep(supabase, profile.telegram_chat_id, { name: "idle" });
     }
 
     switch (cmd) {
       case "/start": return handleStart(supabase, profile);
       case "/help": return handleHelp(profile);
-      case "/profile": return handleProfileStart(profile);
+      case "/profile": return handleProfileStart(supabase, profile);
       case "/me": return handleMe(supabase, profile);
       case "/cari":
       case "/find":
@@ -1381,7 +1454,8 @@ export async function processUpdate(supabase: ReturnType<typeof getSupabase>, up
     }
   }
 
-  const step = stepByChat.get(profile.telegram_chat_id) ?? { name: "idle" };
+  // Load step from DB (safe for cold-starts, falls back to idle)
+  const step = await loadStep(supabase, profile.telegram_chat_id, profile);
   const handled = await handleStepInput(supabase, profile, step, text);
   if (handled) return;
 
@@ -1440,5 +1514,6 @@ export async function processUpdate(supabase: ReturnType<typeof getSupabase>, up
     return;
   }
 
-  await safeSend(partner.telegram_chat_id, text.slice(0, 2000));
+  // Forward message — escape HTML to prevent tag injection between users
+  await safeSend(partner.telegram_chat_id, escapeHtml(text.slice(0, 2000)));
 }
