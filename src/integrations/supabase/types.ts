@@ -269,6 +269,7 @@ export type Database = {
       profiles: {
         Row: {
           alias: string
+          auth_user_id: string | null
           ban_reason: string | null
           bio: string | null
           birth_year: number | null
@@ -280,7 +281,10 @@ export type Database = {
           is_premium: boolean
           language_code: string
           last_seen_at: string
+          no_ai: boolean
           onboarding_completed: boolean
+          onboarding_step: string | null
+          pending_payment_ref: string | null
           premium_until: string | null
           province_code: string | null
           province_name: string | null
@@ -292,6 +296,7 @@ export type Database = {
         }
         Insert: {
           alias: string
+          auth_user_id?: string | null
           ban_reason?: string | null
           bio?: string | null
           birth_year?: number | null
@@ -303,7 +308,10 @@ export type Database = {
           is_premium?: boolean
           language_code?: string
           last_seen_at?: string
+          no_ai?: boolean
           onboarding_completed?: boolean
+          onboarding_step?: string | null
+          pending_payment_ref?: string | null
           premium_until?: string | null
           province_code?: string | null
           province_name?: string | null
@@ -315,6 +323,7 @@ export type Database = {
         }
         Update: {
           alias?: string
+          auth_user_id?: string | null
           ban_reason?: string | null
           bio?: string | null
           birth_year?: number | null
@@ -326,7 +335,10 @@ export type Database = {
           is_premium?: boolean
           language_code?: string
           last_seen_at?: string
+          no_ai?: boolean
           onboarding_completed?: boolean
+          onboarding_step?: string | null
+          pending_payment_ref?: string | null
           premium_until?: string | null
           province_code?: string | null
           province_name?: string | null
@@ -636,6 +648,25 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      admin_cancel_bot_signal: {
+        Args: { _admin_id: string; _signal_id: string }
+        Returns: boolean
+      }
+      admin_daily_conversations: {
+        Args: { _days?: number }
+        Returns: {
+          count: number
+          day: string
+        }[]
+      }
+      admin_daily_signups: {
+        Args: { _days?: number }
+        Returns: {
+          count: number
+          day: string
+        }[]
+      }
+      admin_dashboard_stats: { Args: never; Returns: Json }
       apply_trust_score_change: {
         Args: { _delta: number; _profile_id: string }
         Returns: number
@@ -677,6 +708,10 @@ export type Database = {
         Returns: boolean
       }
       is_admin: { Args: never; Returns: boolean }
+      link_admin_auth_user: {
+        Args: { _auth_user_id: string; _email: string }
+        Returns: string
+      }
       purge_old_messages: { Args: never; Returns: number }
       record_trust_event: {
         Args: {
