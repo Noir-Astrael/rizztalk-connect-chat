@@ -1230,17 +1230,21 @@ async function handleStepInput(
       reason,
     });
 
+    // Re-fetch reported AFTER trigger handle_new_report ran (it already deducts -5 and may auto-ban).
+    // We log the trust_event via record_trust_event with delta=0 so the audit trail captures the verified report
+    // (the actual −5 was applied by the trigger to keep score capped & atomic).
     const reported = await getProfileById(supabase, step.reportedId);
     const banned = !!reported.is_banned_until && new Date(reported.is_banned_until) > new Date();
     const banUntil = banned ? new Date(reported.is_banned_until!).toLocaleString("id-ID") : null;
     const reasonText = `Report terverifikasi (${reason})${banned ? " · auto-ban 24 jam tercapai" : ""}`;
 
+    // Audit trail event: delta 0 (already applied by trigger) — keeps history consistent without double-counting.
     await supabase.from("trust_events").insert({
       profile_id: reported.id,
       conversation_id: step.conversationId,
       event_type: banned ? "ban" : "reported",
       delta: -5,
-      new_score: reported.trust_score,
+      new_score: reported.trust_score, // post-trigger score
       reason: reasonText,
     });
 
