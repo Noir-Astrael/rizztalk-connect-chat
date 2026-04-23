@@ -280,6 +280,7 @@ export type Database = {
           is_premium: boolean
           language_code: string
           last_seen_at: string
+          no_ai: boolean
           onboarding_completed: boolean
           premium_until: string | null
           province_code: string | null
@@ -303,6 +304,7 @@ export type Database = {
           is_premium?: boolean
           language_code?: string
           last_seen_at?: string
+          no_ai?: boolean
           onboarding_completed?: boolean
           premium_until?: string | null
           province_code?: string | null
@@ -326,6 +328,7 @@ export type Database = {
           is_premium?: boolean
           language_code?: string
           last_seen_at?: string
+          no_ai?: boolean
           onboarding_completed?: boolean
           premium_until?: string | null
           province_code?: string | null
@@ -636,6 +639,10 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      admin_cancel_bot_signal: {
+        Args: { _admin_id: string; _signal_id: string }
+        Returns: boolean
+      }
       apply_trust_score_change: {
         Args: { _delta: number; _profile_id: string }
         Returns: number
