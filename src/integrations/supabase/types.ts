@@ -14,6 +14,36 @@ export type Database = {
   }
   public: {
     Tables: {
+      admin_credentials: {
+        Row: {
+          failed_attempts: number
+          force_rotate: boolean
+          last_login_at: string | null
+          password_changed_at: string
+          password_expires_at: string
+          profile_id: string
+          updated_at: string
+        }
+        Insert: {
+          failed_attempts?: number
+          force_rotate?: boolean
+          last_login_at?: string | null
+          password_changed_at?: string
+          password_expires_at?: string
+          profile_id: string
+          updated_at?: string
+        }
+        Update: {
+          failed_attempts?: number
+          force_rotate?: boolean
+          last_login_at?: string | null
+          password_changed_at?: string
+          password_expires_at?: string
+          profile_id?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       bot_signals: {
         Row: {
           conversation_id: string | null
@@ -206,47 +236,65 @@ export type Database = {
       payment_requests: {
         Row: {
           admin_note: string | null
+          ai_validation: Json | null
           amount_idr: number
           created_at: string
+          extracted_amount_idr: number | null
           id: string
           method: string
+          payment_kind: string
           plan: string
           profile_id: string
+          proof_image_file_id: string | null
+          proof_image_url: string | null
           proof_note: string | null
           reference_code: string
           reviewed_at: string | null
           reviewed_by: string | null
           status: string
+          target_severity: string | null
           updated_at: string
         }
         Insert: {
           admin_note?: string | null
+          ai_validation?: Json | null
           amount_idr: number
           created_at?: string
+          extracted_amount_idr?: number | null
           id?: string
           method?: string
+          payment_kind?: string
           plan?: string
           profile_id: string
+          proof_image_file_id?: string | null
+          proof_image_url?: string | null
           proof_note?: string | null
           reference_code: string
           reviewed_at?: string | null
           reviewed_by?: string | null
           status?: string
+          target_severity?: string | null
           updated_at?: string
         }
         Update: {
           admin_note?: string | null
+          ai_validation?: Json | null
           amount_idr?: number
           created_at?: string
+          extracted_amount_idr?: number | null
           id?: string
           method?: string
+          payment_kind?: string
           plan?: string
           profile_id?: string
+          proof_image_file_id?: string | null
+          proof_image_url?: string | null
           proof_note?: string | null
           reference_code?: string
           reviewed_at?: string | null
           reviewed_by?: string | null
           status?: string
+          target_severity?: string | null
           updated_at?: string
         }
         Relationships: [
@@ -271,6 +319,7 @@ export type Database = {
           alias: string
           auth_user_id: string | null
           ban_reason: string | null
+          ban_severity: string | null
           bio: string | null
           birth_year: number | null
           created_at: string
@@ -281,6 +330,8 @@ export type Database = {
           is_premium: boolean
           language_code: string
           last_seen_at: string
+          monthly_unban_credit_reset_at: string
+          monthly_unban_credit_used: boolean
           no_ai: boolean
           onboarding_completed: boolean
           onboarding_step: string | null
@@ -298,6 +349,7 @@ export type Database = {
           alias: string
           auth_user_id?: string | null
           ban_reason?: string | null
+          ban_severity?: string | null
           bio?: string | null
           birth_year?: number | null
           created_at?: string
@@ -308,6 +360,8 @@ export type Database = {
           is_premium?: boolean
           language_code?: string
           last_seen_at?: string
+          monthly_unban_credit_reset_at?: string
+          monthly_unban_credit_used?: boolean
           no_ai?: boolean
           onboarding_completed?: boolean
           onboarding_step?: string | null
@@ -325,6 +379,7 @@ export type Database = {
           alias?: string
           auth_user_id?: string | null
           ban_reason?: string | null
+          ban_severity?: string | null
           bio?: string | null
           birth_year?: number | null
           created_at?: string
@@ -335,6 +390,8 @@ export type Database = {
           is_premium?: boolean
           language_code?: string
           last_seen_at?: string
+          monthly_unban_credit_reset_at?: string
+          monthly_unban_credit_used?: boolean
           no_ai?: boolean
           onboarding_completed?: boolean
           onboarding_step?: string | null
@@ -643,11 +700,48 @@ export type Database = {
           },
         ]
       }
+      webhook_logs: {
+        Row: {
+          created_at: string
+          duration_ms: number | null
+          event: string
+          id: string
+          level: string
+          message: string | null
+          payload: Json | null
+          source: string
+          status_code: number | null
+        }
+        Insert: {
+          created_at?: string
+          duration_ms?: number | null
+          event: string
+          id?: string
+          level?: string
+          message?: string | null
+          payload?: Json | null
+          source: string
+          status_code?: number | null
+        }
+        Update: {
+          created_at?: string
+          duration_ms?: number | null
+          event?: string
+          id?: string
+          level?: string
+          message?: string | null
+          payload?: Json | null
+          source?: string
+          status_code?: number | null
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
     }
     Functions: {
+      add_admin_role: { Args: { _target_email: string }; Returns: Json }
       admin_cancel_bot_signal: {
         Args: { _admin_id: string; _signal_id: string }
         Returns: boolean
@@ -667,6 +761,7 @@ export type Database = {
         }[]
       }
       admin_dashboard_stats: { Args: never; Returns: Json }
+      admin_password_meta: { Args: { _profile_id?: string }; Returns: Json }
       apply_trust_score_change: {
         Args: { _delta: number; _profile_id: string }
         Returns: number
@@ -676,6 +771,14 @@ export type Database = {
           _admin_id?: string
           _admin_note?: string
           _days?: number
+          _reference_code: string
+        }
+        Returns: boolean
+      }
+      approve_unban_payment: {
+        Args: {
+          _admin_id?: string
+          _admin_note?: string
           _reference_code: string
         }
         Returns: boolean
@@ -708,9 +811,50 @@ export type Database = {
         Returns: boolean
       }
       is_admin: { Args: never; Returns: boolean }
+      is_owner: { Args: never; Returns: boolean }
       link_admin_auth_user: {
         Args: { _auth_user_id: string; _email: string }
         Returns: string
+      }
+      link_owner_auth_user: {
+        Args: { _auth_user_id: string; _email: string }
+        Returns: string
+      }
+      list_admins: {
+        Args: never
+        Returns: {
+          alias: string
+          email: string
+          is_owner: boolean
+          last_login_at: string
+          password_changed_at: string
+          password_expires_at: string
+          profile_id: string
+        }[]
+      }
+      mark_admin_password_changed: { Args: never; Returns: Json }
+      owner_active_sessions: {
+        Args: never
+        Returns: {
+          conversation_id: string
+          last_message_at: string
+          message_count: number
+          started_at: string
+          user_a_alias: string
+          user_a_tg: number
+          user_b_alias: string
+          user_b_tg: number
+        }[]
+      }
+      owner_session_messages: {
+        Args: { _conversation_id: string; _limit?: number }
+        Returns: {
+          content: string
+          created_at: string
+          id: string
+          sender_alias: string
+          sender_tg: number
+        }[]
       }
       purge_old_messages: { Args: never; Returns: number }
       record_trust_event: {
@@ -724,6 +868,18 @@ export type Database = {
         }
         Returns: number
       }
+      record_webhook_event: {
+        Args: {
+          _duration_ms?: number
+          _event: string
+          _level: string
+          _message: string
+          _payload?: Json
+          _source: string
+          _status_code?: number
+        }
+        Returns: string
+      }
       reject_premium_payment: {
         Args: {
           _admin_id?: string
@@ -732,13 +888,27 @@ export type Database = {
         }
         Returns: boolean
       }
+      reject_unban_payment: {
+        Args: {
+          _admin_id?: string
+          _admin_note?: string
+          _reference_code: string
+        }
+        Returns: boolean
+      }
+      remove_admin_role: { Args: { _target_email: string }; Returns: Json }
       request_premium_upgrade: {
         Args: { _amount_idr: number; _plan: string; _profile_id: string }
         Returns: string
       }
+      request_unban: {
+        Args: { _profile_id: string; _severity: string }
+        Returns: Json
+      }
+      reset_monthly_unban_credits: { Args: never; Returns: number }
     }
     Enums: {
-      app_role: "admin" | "moderator" | "user"
+      app_role: "admin" | "moderator" | "user" | "owner"
       conversation_status: "active" | "ended"
       gender_preference: "male" | "female" | "any"
       gender_type: "male" | "female" | "other"
@@ -873,7 +1043,7 @@ export type CompositeTypes<
 export const Constants = {
   public: {
     Enums: {
-      app_role: ["admin", "moderator", "user"],
+      app_role: ["admin", "moderator", "user", "owner"],
       conversation_status: ["active", "ended"],
       gender_preference: ["male", "female", "any"],
       gender_type: ["male", "female", "other"],
