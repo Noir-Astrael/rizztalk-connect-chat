@@ -226,7 +226,7 @@ export default function OwnerDashboard() {
       <main className="max-w-[1400px] mx-auto px-6 py-8 space-y-6">
         {tab === "overview" && stats && (
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            {[
+            {([
               ["Total Pengguna", stats.total_users, Users],
               ["Premium Aktif", stats.premium_users, Sparkles],
               ["Sesi Aktif", stats.active_chats, MessageSquare],
@@ -235,16 +235,13 @@ export default function OwnerDashboard() {
               ["Disetujui Premium", stats.approved_payments, CheckCircle2],
               ["Disetujui Unban", stats.approved_unbans, CheckCircle2],
               ["Webhook Errors 24j", stats.webhook_errors_24h, XCircle],
-            ].map(([label, val, Icon]) => {
-              const I = Icon as React.ElementType;
-              return (
-                <div key={label as string} className="glass-card rounded-2xl p-5 border border-border/40">
-                  <I className="w-5 h-5 text-primary mb-3" />
-                  <p className="text-2xl font-bold tabular-nums">{Number(val ?? 0).toLocaleString()}</p>
-                  <p className="text-sm text-muted-foreground">{label}</p>
-                </div>
-              );
-            })}
+            ] as Array<[string, number, React.ElementType]>).map(([label, val, Icon]) => (
+              <div key={label} className="glass-card rounded-2xl p-5 border border-border/40">
+                <Icon className="w-5 h-5 text-primary mb-3" />
+                <p className="text-2xl font-bold tabular-nums">{Number(val ?? 0).toLocaleString()}</p>
+                <p className="text-sm text-muted-foreground">{label}</p>
+              </div>
+            ))}
           </div>
         )}
 
