@@ -151,6 +151,7 @@ const T = {
     `/me — lihat profil & riwayat trust score kamu\n` +
     `/premium — upgrade premium\n` +
     `/upgrade — lihat QRIS & instruksi bayar\n` +
+    `/unban [light|medium|severe] — bayar untuk unban (Rp5–15rb)\n` +
     `/nonai — tolak AI Companion, hanya match manusia\n` +
     `/ai — status AI Companion & riwayat 5 pesan AI\n` +
     `/help — bantuan\n\n` +
