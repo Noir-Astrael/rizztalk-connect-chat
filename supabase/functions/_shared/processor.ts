@@ -1500,6 +1500,7 @@ export async function processUpdate(supabase: ReturnType<typeof getSupabase>, up
       case "/block": return handleBlock(supabase, profile);
       case "/premium": return handlePremium(profile);
       case "/upgrade": return handleUpgrade(supabase, profile);
+      case "/unban": return handleUnban(supabase, profile, arg1);
       case "/admin": return handleAdmin(supabase, profile, parts.slice(1));
       case "/nonai": return handleNoAi(supabase, profile);
       case "/ai": return handleAiStatus(supabase, profile);
