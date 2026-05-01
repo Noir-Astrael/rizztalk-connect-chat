@@ -151,6 +151,7 @@ const T = {
     `/me — lihat profil & riwayat trust score kamu\n` +
     `/premium — upgrade premium\n` +
     `/upgrade — lihat QRIS & instruksi bayar\n` +
+    `/unban [light|medium|severe] — bayar untuk unban (Rp5–15rb)\n` +
     `/nonai — tolak AI Companion, hanya match manusia\n` +
     `/ai — status AI Companion & riwayat 5 pesan AI\n` +
     `/help — bantuan\n\n` +
@@ -682,6 +683,57 @@ async function handleMe(supabase: ReturnType<typeof getSupabase>, profile: Profi
 
 async function handleHelp(profile: Profile) {
   await sendMessage(profile.telegram_chat_id, T.help);
+}
+
+async function handleUnban(
+  supabase: ReturnType<typeof getSupabase>,
+  profile: Profile,
+  arg: string | null,
+) {
+  if (!profile.is_banned_until || new Date(profile.is_banned_until) <= new Date()) {
+    await sendMessage(profile.telegram_chat_id, "✅ Akun kamu tidak sedang di-ban. Ketik /cari untuk mulai.");
+    return;
+  }
+  const sev = (arg ?? "").toLowerCase();
+  if (!["light", "medium", "severe"].includes(sev)) {
+    await sendMessage(
+      profile.telegram_chat_id,
+      `🚫 <b>Unban Berbayar</b>\n\n` +
+      `Pilih tingkat ban kamu:\n` +
+      `• <code>/unban light</code> — Rp5.000 (ban ringan, &lt;7 report)\n` +
+      `• <code>/unban medium</code> — Rp10.000 (ban sedang, 7–9 report)\n` +
+      `• <code>/unban severe</code> — Rp15.000 (ban berat, ≥10 report)\n\n` +
+      `Atau premium aktif dapat 1× unban gratis/bulan via /upgrade.`,
+    );
+    return;
+  }
+  // Premium monthly free unban credit (light only)
+  if (profile.is_premium && !((profile as any).monthly_unban_credit_used) && sev === "light") {
+    await supabase.from("profiles").update({
+      is_banned_until: null, ban_reason: null, ban_severity: null,
+      monthly_unban_credit_used: true,
+    }).eq("id", profile.id);
+    await sendMessage(profile.telegram_chat_id, "🎁 Premium bonus: unban gratis bulan ini dipakai. Akun aktif kembali.");
+    return;
+  }
+  const { data, error } = await supabase.rpc("request_unban", { _profile_id: profile.id, _severity: sev });
+  if (error || !data?.ok) {
+    await sendMessage(profile.telegram_chat_id, "❌ Gagal membuat permintaan unban. Coba lagi.");
+    return;
+  }
+  const refCode = data.reference_code as string;
+  const amount = data.amount_idr as number;
+  await persistStep(supabase, profile.telegram_chat_id, { name: "await_payment_proof", referenceCode: refCode } as any);
+  await sendPhoto(
+    profile.telegram_chat_id,
+    QRIS_IMAGE_URL,
+    `📷 Scan QRIS — kode: <b>${refCode}</b>\n💰 Nominal: <b>Rp${amount.toLocaleString("id-ID")}</b>`,
+  ).catch(() => {});
+  await safeSend(
+    profile.telegram_chat_id,
+    `Setelah transfer, kirim foto bukti transfer (caption opsional). AI akan memverifikasi nominal otomatis.\n` +
+    `Kode referensi: <code>${refCode}</code>`,
+  );
 }
 
 async function handlePremium(profile: Profile) {
@@ -1449,6 +1501,7 @@ export async function processUpdate(supabase: ReturnType<typeof getSupabase>, up
       case "/block": return handleBlock(supabase, profile);
       case "/premium": return handlePremium(profile);
       case "/upgrade": return handleUpgrade(supabase, profile);
+      case "/unban": return handleUnban(supabase, profile, arg1);
       case "/admin": return handleAdmin(supabase, profile, parts.slice(1));
       case "/nonai": return handleNoAi(supabase, profile);
       case "/ai": return handleAiStatus(supabase, profile);

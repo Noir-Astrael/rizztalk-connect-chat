@@ -11,3 +11,9 @@ verify_jwt = false
 
 [functions.ai-fallback-sweep]
 verify_jwt = false
+
+[functions.healthcheck]
+verify_jwt = false
+
+[functions.validate-payment-proof]
+verify_jwt = false
