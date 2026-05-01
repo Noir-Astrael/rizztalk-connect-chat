@@ -21,20 +21,32 @@ export function useAdminAuth(): AdminAuthState {
         if (mounted) setState({ status: "unauthenticated" });
         return;
       }
-      // Verify admin/owner role via roles RPC
-      const [{ data: stats, error: statsErr }, { data: rolesData }] = await Promise.all([
-        supabase.rpc("admin_dashboard_stats"),
-        supabase
-          .from("user_roles")
-          .select("role, profiles!inner(auth_user_id)")
-          .eq("profiles.auth_user_id", session.user.id),
-      ]);
+
+      // Verify admin access via dashboard stats RPC (is_admin() check server-side)
+      const { data: stats, error: statsErr } = await supabase.rpc("admin_dashboard_stats");
       if (statsErr || stats === null) {
         if (mounted) setState({ status: "not_admin" });
         return;
       }
-      const roles = (rolesData ?? []).map((r: { role: string }) => r.role);
-      const role: Role = roles.includes("owner") ? "owner" : "admin";
+
+      // Determine role: use is_owner() RPC (SECURITY DEFINER, reliable for web auth)
+      // plus fallback to user_roles table query
+      let role: Role = "admin";
+      const { data: isOwnerResult, error: ownerErr } = await supabase.rpc("is_owner");
+      if (!ownerErr && isOwnerResult === true) {
+        role = "owner";
+      } else if (ownerErr) {
+        // Fallback: query user_roles table directly
+        const { data: rolesData } = await supabase
+          .from("user_roles")
+          .select("role, profiles!inner(auth_user_id)")
+          .eq("profiles.auth_user_id", session.user.id);
+        const roles = (rolesData ?? []).map((r: { role: string }) => r.role);
+        if (roles.includes("owner")) {
+          role = "owner";
+        }
+      }
+
       if (mounted) {
         setState({ status: "admin", session, email: session.user.email ?? "", role });
       }

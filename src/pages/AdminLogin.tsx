@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { adminSignIn } from "@/hooks/useAdminAuth";
+import { supabase } from "@/integrations/supabase/client";
 import { Lock, LogIn, Eye, EyeOff, Zap } from "lucide-react";
 
 export default function AdminLogin() {
@@ -16,7 +17,7 @@ export default function AdminLogin() {
     setLoading(true);
     setError(null);
 
-    const { error: authError } = await adminSignIn(email, password);
+    const { data: authData, error: authError } = await adminSignIn(email, password);
     if (authError) {
       setError(authError.message === "Invalid login credentials"
         ? "Email atau password salah."
@@ -25,6 +26,27 @@ export default function AdminLogin() {
       return;
     }
 
+    // Check user role to decide where to navigate
+    const { data: isOwnerResult, error: ownerErr } = await supabase.rpc("is_owner");
+    if (!ownerErr && isOwnerResult === true) {
+      navigate("/owner");
+      return;
+    }
+    // Fallback: check user_roles table if RPC failed
+    if (ownerErr) {
+      const userId = authData.session?.user?.id;
+      if (userId) {
+        const { data: rolesData } = await supabase
+          .from("user_roles")
+          .select("role, profiles!inner(auth_user_id)")
+          .eq("profiles.auth_user_id", userId);
+        const roles = (rolesData ?? []).map((r: { role: string }) => r.role);
+        if (roles.includes("owner")) {
+          navigate("/owner");
+          return;
+        }
+      }
+    }
     navigate("/admin");
   }
 

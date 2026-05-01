@@ -170,13 +170,16 @@ export default function OwnerDashboard() {
     refresh();
   }
 
-  if (auth.status === "loading" || (auth.status === "admin" && auth.role !== "owner")) {
+  if (auth.status === "loading") {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background">
         <Loader2 className="w-6 h-6 animate-spin text-primary" />
       </div>
     );
   }
+
+  // If authenticated but not owner, the useEffect will handle the redirect
+  if (auth.status === "admin" && auth.role !== "owner") return null;
   if (auth.status !== "admin") return null;
 
   return (
