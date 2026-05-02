@@ -127,3 +127,46 @@ export async function getUpdates(offset: number, timeout = 50) {
     allowed_updates: ["message"],
   });
 }
+
+// Ambil metadata file (untuk dapat file_path) berdasarkan file_id Telegram.
+export async function getFile(fileId: string): Promise<{ file_path: string; file_size?: number } | null> {
+  try {
+    const res = await tgFetch("/getFile", { file_id: fileId });
+    return res?.result ?? null;
+  } catch (err) {
+    console.error(`getFile failed: ${err instanceof Error ? err.message : err}`);
+    return null;
+  }
+}
+
+// Download file Telegram via gateway, return base64 + mime.
+export async function downloadTelegramFile(fileId: string): Promise<{ base64: string; mime: string } | null> {
+  const meta = await getFile(fileId);
+  if (!meta?.file_path) return null;
+  const { LOVABLE_API_KEY, TELEGRAM_API_KEY } = getKeys();
+  try {
+    const res = await fetch(`${GATEWAY_URL}/file/${meta.file_path}`, {
+      headers: {
+        "Authorization": `Bearer ${LOVABLE_API_KEY}`,
+        "X-Connection-Api-Key": TELEGRAM_API_KEY,
+      },
+    });
+    if (!res.ok) {
+      console.error(`downloadTelegramFile HTTP ${res.status}`);
+      return null;
+    }
+    const buf = new Uint8Array(await res.arrayBuffer());
+    let binary = "";
+    const CHUNK = 0x8000;
+    for (let i = 0; i < buf.length; i += CHUNK) {
+      binary += String.fromCharCode(...buf.subarray(i, i + CHUNK));
+    }
+    const base64 = btoa(binary);
+    const ext = meta.file_path.split(".").pop()?.toLowerCase() ?? "jpg";
+    const mime = ext === "png" ? "image/png" : ext === "webp" ? "image/webp" : "image/jpeg";
+    return { base64, mime };
+  } catch (err) {
+    console.error(`downloadTelegramFile failed: ${err instanceof Error ? err.message : err}`);
+    return null;
+  }
+}
