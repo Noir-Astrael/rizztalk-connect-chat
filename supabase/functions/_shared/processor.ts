@@ -797,7 +797,180 @@ async function handleUpgrade(supabase: ReturnType<typeof getSupabase>, profile: 
   await safeSend(profile.telegram_chat_id, T.upgradeInstructions(refCode));
 }
 
-async function handleCari(
+// ============= /batal — cancel pending payment proof upload =============
+async function handleCancelProof(supabase: ReturnType<typeof getSupabase>, profile: Profile) {
+  const currentStep = stepByChat.get(profile.telegram_chat_id);
+  const refFromStep = currentStep?.name === "await_payment_proof" ? currentStep.referenceCode : null;
+  const refCode = refFromStep ?? profile.pending_payment_ref ?? null;
+
+  if (!refCode) {
+    await sendMessage(
+      profile.telegram_chat_id,
+      "ℹ️ Tidak ada upload bukti transfer yang sedang berlangsung.",
+    );
+    return;
+  }
+
+  // Cancel pending payment_request (only if still pending and no proof yet)
+  const { data: pr } = await supabase
+    .from("payment_requests")
+    .select("id, status, proof_image_file_id, proof_note")
+    .eq("reference_code", refCode)
+    .maybeSingle();
+
+  if (pr && pr.status === "pending") {
+    await supabase
+      .from("payment_requests")
+      .update({
+        status: "cancelled",
+        admin_note: "Dibatalkan oleh user via /batal",
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", pr.id);
+  }
+
+  await persistStep(supabase, profile.telegram_chat_id, { name: "idle" });
+  await sendMessage(
+    profile.telegram_chat_id,
+    `❎ <b>Upload bukti transfer dibatalkan.</b>\n\n` +
+    `Kode <code>${refCode}</code> dibatalkan. Kalau mau coba lagi:\n` +
+    `• Premium → /upgrade\n` +
+    `• Unban → /unban [light|medium|severe]`,
+  );
+}
+
+// ============= Photo proof upload handler (AI Vision validation) =============
+async function handlePhotoProof(
+  supabase: ReturnType<typeof getSupabase>,
+  profile: Profile,
+  msg: TgMessage,
+): Promise<boolean> {
+  const step = await loadStep(supabase, profile.telegram_chat_id, profile);
+  if (step.name !== "await_payment_proof") {
+    await sendMessage(
+      profile.telegram_chat_id,
+      "ℹ️ Foto diterima, tapi tidak ada pembayaran yang menunggu bukti.\nKetik /upgrade untuk premium atau /unban untuk buka ban.",
+    );
+    return true;
+  }
+
+  const photos = msg.photo ?? [];
+  if (photos.length === 0) return false;
+  // Pick highest-resolution photo
+  const best = photos.reduce((a, b) => (a.width * a.height >= b.width * b.height ? a : b));
+
+  await safeSend(profile.telegram_chat_id, "🔍 Memverifikasi bukti transfer dengan AI… (5–15 detik)");
+
+  const fileData = await downloadTelegramFile(best.file_id);
+  if (!fileData) {
+    await safeSend(
+      profile.telegram_chat_id,
+      "❌ Gagal mengunduh foto dari Telegram. Coba kirim ulang, atau ketik /batal untuk batalkan.",
+    );
+    return true;
+  }
+
+  // Save file_id to payment_request for admin reference
+  await supabase
+    .from("payment_requests")
+    .update({
+      proof_image_file_id: best.file_id,
+      proof_note: msg.caption?.slice(0, 500) ?? null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("reference_code", step.referenceCode);
+
+  // Call AI Vision validator edge function
+  const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
+  const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+  let validation: {
+    ok?: boolean;
+    expected_idr?: number;
+    extracted_idr?: number;
+    shortfall_idr?: number;
+    matched?: boolean;
+    auto_approve_eligible?: boolean;
+    note?: string;
+    error?: string;
+  } = {};
+  try {
+    const res = await fetch(`${SUPABASE_URL}/functions/v1/validate-payment-proof`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${SERVICE_KEY}` },
+      body: JSON.stringify({
+        reference_code: step.referenceCode,
+        image_base64: fileData.base64,
+        image_mime: fileData.mime,
+      }),
+    });
+    validation = await res.json();
+  } catch (err) {
+    console.error("validate-payment-proof failed", err);
+    await safeSend(
+      profile.telegram_chat_id,
+      "⚠️ AI verifikasi sedang sibuk. Bukti tetap tersimpan & akan diperiksa admin manual (1×24 jam).\nKetik /batal kalau salah kirim foto.",
+    );
+    await persistStep(supabase, profile.telegram_chat_id, { name: "idle" });
+    return true;
+  }
+
+  if (validation.error || !validation.ok) {
+    await safeSend(
+      profile.telegram_chat_id,
+      "⚠️ Bukti tersimpan, tapi AI tidak dapat memverifikasi otomatis. Admin akan cek manual (1×24 jam).\nKalau salah kirim foto, ketik /batal.",
+    );
+    return true;
+  }
+
+  const expected = validation.expected_idr ?? 0;
+  const extracted = validation.extracted_idr ?? 0;
+  const shortfall = validation.shortfall_idr ?? 0;
+
+  if (shortfall > 0) {
+    // Underpaid — keep step active so user can send another receipt
+    await safeSend(
+      profile.telegram_chat_id,
+      `⚠️ <b>Nominal kurang.</b>\n\n` +
+      `• Diharapkan: <b>Rp${expected.toLocaleString("id-ID")}</b>\n` +
+      `• Terbaca AI: <b>Rp${extracted.toLocaleString("id-ID")}</b>\n` +
+      `• Kurang: <b>Rp${shortfall.toLocaleString("id-ID")}</b>\n\n` +
+      `Silakan transfer kekurangannya lalu kirim ulang foto bukti transfer baru.\n` +
+      `Atau ketik /batal untuk membatalkan.`,
+    );
+    return true;
+  }
+
+  if (validation.auto_approve_eligible) {
+    // Auto-approve via RPC
+    const { data: pr } = await supabase
+      .from("payment_requests")
+      .select("id, payment_kind")
+      .eq("reference_code", step.referenceCode)
+      .maybeSingle();
+    if (pr) {
+      const rpc = pr.payment_kind === "unban" ? "approve_unban_payment" : "approve_premium_payment";
+      await supabase.rpc(rpc, { _payment_id: pr.id, _admin_id: null, _note: "Auto-approved by AI Vision" }).catch((e) => console.error(`${rpc} failed`, e));
+    }
+    await persistStep(supabase, profile.telegram_chat_id, { name: "idle" });
+    await safeSend(
+      profile.telegram_chat_id,
+      `✅ <b>Pembayaran terverifikasi otomatis oleh AI!</b>\n\n` +
+      `• Nominal: <b>Rp${extracted.toLocaleString("id-ID")}</b>\n` +
+      `• Status: aktif. Selamat menikmati!`,
+    );
+    return true;
+  }
+
+  // Matched but low confidence → wait for admin
+  await persistStep(supabase, profile.telegram_chat_id, { name: "idle" });
+  await safeSend(
+    profile.telegram_chat_id,
+    `✅ <b>Bukti diterima & nominal cocok</b> (Rp${extracted.toLocaleString("id-ID")}).\n` +
+    `Verifikasi akhir oleh admin (≤1×24 jam). Kamu akan dapat notifikasi otomatis.`,
+  );
+  return true;
+}
+
   supabase: ReturnType<typeof getSupabase>,
   profile: Profile,
   trustFilter: TrustFilter = "any",
