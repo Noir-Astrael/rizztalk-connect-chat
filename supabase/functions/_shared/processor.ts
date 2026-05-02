@@ -738,7 +738,8 @@ async function handleUnban(
   await safeSend(
     profile.telegram_chat_id,
     `Setelah transfer, kirim foto bukti transfer (caption opsional). AI akan memverifikasi nominal otomatis.\n` +
-    `Kode referensi: <code>${refCode}</code>`,
+    `Kode referensi: <code>${refCode}</code>\n\n` +
+    `<i>Salah kirim foto? Ketik /batal untuk batalkan.</i>`,
   );
 }
 
