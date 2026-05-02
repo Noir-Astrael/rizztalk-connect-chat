@@ -29,7 +29,7 @@ export const Hero = () => (
         <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full glass-card mb-8">
           <Sparkles className="w-4 h-4 text-primary" />
           <span className="text-sm text-muted-foreground font-mono">
-            White Paper v1.0 · 2025
+            Anonymous Chat · 2025
           </span>
         </div>
 
