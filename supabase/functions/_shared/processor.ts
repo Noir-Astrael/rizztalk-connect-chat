@@ -1411,7 +1411,11 @@ async function handleStepInput(
   if (step.name === "await_payment_proof") {
     const proof = text.trim().slice(0, 500);
     if (proof.length < 5) {
-      await sendMessage(profile.telegram_chat_id, "❌ Detail bukti terlalu pendek. Sertakan nama pengirim, jam, dan nominal.");
+      await sendMessage(
+        profile.telegram_chat_id,
+        "📷 Kirim <b>foto bukti transfer</b> sebagai gambar (bukan teks). AI akan memverifikasi nominal otomatis.\n\n" +
+        "Salah kirim? Ketik /batal untuk membatalkan upload.",
+      );
       return true;
     }
     await supabase
@@ -1419,8 +1423,11 @@ async function handleStepInput(
       .update({ proof_note: proof, updated_at: new Date().toISOString() })
       .eq("reference_code", step.referenceCode)
       .eq("status", "pending");
-    await persistStep(supabase, profile.telegram_chat_id, { name: "idle" });
-    await safeSend(profile.telegram_chat_id, T.upgradeProofReceived(step.referenceCode));
+    // Tetap di step await_payment_proof — supaya user bisa lanjut kirim foto
+    await safeSend(
+      profile.telegram_chat_id,
+      "📝 Catatan tersimpan. Sekarang kirim <b>foto bukti transfer</b> sebagai gambar agar AI bisa verifikasi.\nKetik /batal untuk batalkan.",
+    );
     return true;
   }
 
