@@ -100,7 +100,7 @@ export function getSupabase() {
 const PREMIUM_MONTHLY_IDR = 20_000;
 // QRIS statis — set env var QRIS_IMAGE_URL di Supabase Dashboard > Edge Functions > Secrets
 const QRIS_IMAGE_URL = Deno.env.get("QRIS_IMAGE_URL") ??
-  "https://lrhxtsnammweqylqbsuv.supabase.co/storage/v1/object/public/assets/qris.jpg";
+  "https://lrhxtsnammweqylqbsuv.supabase.co/storage/v1/object/public/qris-images//qris-payment.jpeg";
 const PAYMENT_MERCHANT = Deno.env.get("PAYMENT_MERCHANT") ?? "Secret Shop";
 const PAYMENT_NMID = Deno.env.get("PAYMENT_NMID") ?? "ID1026507854309";
 
