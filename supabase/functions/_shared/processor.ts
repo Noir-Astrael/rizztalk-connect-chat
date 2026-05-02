@@ -971,6 +971,7 @@ async function handlePhotoProof(
   return true;
 }
 
+async function handleCari(
   supabase: ReturnType<typeof getSupabase>,
   profile: Profile,
   trustFilter: TrustFilter = "any",
