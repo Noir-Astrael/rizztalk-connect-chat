@@ -1605,7 +1605,9 @@ async function handleAiStatus(supabase: ReturnType<typeof getSupabase>, profile:
 
 export async function processUpdate(supabase: ReturnType<typeof getSupabase>, update: TgUpdate) {
   const msg = update.message;
-  if (!msg || !msg.from || !msg.text) return;
+  if (!msg || !msg.from) return;
+  // Accept text OR photo (foto bukti transfer)
+  if (!msg.text && !(msg.photo && msg.photo.length > 0)) return;
 
   const { data: existing } = await supabase
     .from("telegram_updates_log")
@@ -1624,8 +1626,12 @@ export async function processUpdate(supabase: ReturnType<typeof getSupabase>, up
   const profile = await ensureProfile(supabase, msg);
 
   if (profile.is_banned_until && new Date(profile.is_banned_until) > new Date()) {
-    await sendMessage(profile.telegram_chat_id, T.bannedUntil(new Date(profile.is_banned_until).toLocaleString("id-ID")));
-    return;
+    // Tetap izinkan /unban + /batal walau di-ban
+    const banText = (msg.text ?? "").trim().toLowerCase();
+    if (!banText.startsWith("/unban") && !banText.startsWith("/batal") && !banText.startsWith("/cancel") && !banText.startsWith("/start") && !banText.startsWith("/help")) {
+      await sendMessage(profile.telegram_chat_id, T.bannedUntil(new Date(profile.is_banned_until).toLocaleString("id-ID")));
+      return;
+    }
   }
 
   // Global rate limit: 30 events / 60s per user
@@ -1635,7 +1641,13 @@ export async function processUpdate(supabase: ReturnType<typeof getSupabase>, up
     return;
   }
 
-  const text = msg.text.trim();
+  // Photo path: jika user kirim foto, route ke proof handler
+  if (msg.photo && msg.photo.length > 0) {
+    await handlePhotoProof(supabase, profile, msg);
+    return;
+  }
+
+  const text = (msg.text ?? "").trim();
   // Hard input cap (defense)
   if (text.length > 2000) {
     await sendMessage(profile.telegram_chat_id, "❌ Pesan terlalu panjang (max 2000 karakter).");
