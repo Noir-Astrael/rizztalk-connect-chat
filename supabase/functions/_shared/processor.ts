@@ -950,8 +950,11 @@ async function handlePhotoProof(
       .eq("reference_code", step.referenceCode)
       .maybeSingle();
     if (pr) {
+      const args = pr.payment_kind === "unban"
+        ? { _reference_code: step.referenceCode, _admin_id: null, _admin_note: "Auto-approved by AI Vision" }
+        : { _reference_code: step.referenceCode, _days: 30, _admin_id: null, _admin_note: "Auto-approved by AI Vision" };
       const rpc = pr.payment_kind === "unban" ? "approve_unban_payment" : "approve_premium_payment";
-      await supabase.rpc(rpc, { _payment_id: pr.id, _admin_id: null, _note: "Auto-approved by AI Vision" }).catch((e) => console.error(`${rpc} failed`, e));
+      await supabase.rpc(rpc, args).catch((e) => console.error(`${rpc} failed`, e));
     }
     await persistStep(supabase, profile.telegram_chat_id, { name: "idle" });
     await safeSend(
