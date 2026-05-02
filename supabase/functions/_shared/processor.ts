@@ -6,11 +6,14 @@ import { ensureAiProfile, isAiConversation, aiReply, AI_TELEGRAM_USER_ID, AI_ALI
 import { applyDetection } from "./bot-detection.ts";
 
 export type TgUser = { id: number; username?: string; first_name?: string; language_code?: string };
+export type TgPhotoSize = { file_id: string; file_unique_id: string; width: number; height: number; file_size?: number };
 export type TgMessage = {
   message_id: number;
   from?: TgUser;
   chat: { id: number; type: string };
   text?: string;
+  caption?: string;
+  photo?: TgPhotoSize[];
   date: number;
 };
 export type TgUpdate = { update_id: number; message?: TgMessage };
