@@ -1672,9 +1672,10 @@ export async function processUpdate(supabase: ReturnType<typeof getSupabase>, up
       if (!ok) { await sendMessage(profile.telegram_chat_id, T.rateLimited(cmd, lim[1])); return; }
     }
 
-    // Don't reset step for /cari if we're in a flow (e.g. payment proof)
+    // Don't reset step for /cari/batal/cancel if we're in a flow (e.g. payment proof)
     const currentStep = stepByChat.get(profile.telegram_chat_id);
-    if (cmd !== "/help" && cmd !== "/me" && currentStep?.name !== "await_payment_proof") {
+    const preserveStep = cmd === "/help" || cmd === "/me" || cmd === "/batal" || cmd === "/cancel" || currentStep?.name === "await_payment_proof";
+    if (!preserveStep) {
       await persistStep(supabase, profile.telegram_chat_id, { name: "idle" });
     }
 
