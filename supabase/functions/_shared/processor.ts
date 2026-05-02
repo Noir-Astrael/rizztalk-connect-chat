@@ -210,7 +210,8 @@ const T = {
     `4️⃣ Masukkan nominal <b>Rp ${PREMIUM_MONTHLY_IDR.toLocaleString("id-ID")}</b>\n` +
     `5️⃣ Di kolom catatan / berita bayar, tulis kode: <b>${refCode}</b>\n\n` +
     `<i>⚠️ Penting: Cantumkan kode <b>${refCode}</b> di catatan transfer agar admin bisa verifikasi.</i>\n\n` +
-    `Setelah bayar, kirim <b>bukti pembayaran</b> (screenshot + nama akun + jam bayar) sebagai pesan teks ke sini. Verifikasi 1×24 jam.`,
+    `Setelah bayar, kirim <b>foto bukti transfer</b> sebagai gambar ke chat ini. AI akan memverifikasi nominal otomatis.\n\n` +
+    `<i>Salah kirim foto? Ketik /batal untuk membatalkan.</i>`,
   upgradeProofReceived: (refCode: string) =>
     `✅ <b>Bukti transfer diterima!</b>\n\n` +
     `📋 Detail upgrade:\n` +
