@@ -97,7 +97,7 @@ export function getSupabase() {
 }
 
 // ============= PRICING & PAYMENT =============
-const PREMIUM_MONTHLY_IDR = 39_000;
+const PREMIUM_MONTHLY_IDR = 20_000;
 // QRIS statis — set env var QRIS_IMAGE_URL di Supabase Dashboard > Edge Functions > Secrets
 const QRIS_IMAGE_URL = Deno.env.get("QRIS_IMAGE_URL") ??
   "https://lrhxtsnammweqylqbsuv.supabase.co/storage/v1/object/public/assets/qris.jpg";
