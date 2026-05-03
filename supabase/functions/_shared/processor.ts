@@ -1210,8 +1210,7 @@ async function handleBlock(supabase: ReturnType<typeof getSupabase>, profile: Pr
   const durationSec = Math.round((Date.now() - new Date(conv.started_at).getTime()) / 1000);
   await endConversation(supabase, conv, profile.id);
 
-  try { await removeKeyboard(profile.telegram_chat_id, T.blockSuccess(partner.alias)); }
-  catch (e) { console.error("removeKeyboard failed", e); await safeSend(profile.telegram_chat_id, T.blockSuccess(partner.alias)); }
+  await safeSend(profile.telegram_chat_id, T.blockSuccess(partner.alias));
   await safeSend(partner.telegram_chat_id, T.blockNotice);
 
   const blockedDelta = -3;
