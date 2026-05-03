@@ -35,36 +35,59 @@ Deno.serve(async (req) => {
     ? { drop_pending_updates: true }
     : {
         url: webhookUrl,
-        allowed_updates: ["message"],
+        allowed_updates: ["message", "callback_query"],
         drop_pending_updates: true,
         ...(SECRET ? { secret_token: SECRET } : {}),
       };
 
+  const baseHeaders = {
+    "Authorization": `Bearer ${LOVABLE_API_KEY}`,
+    "X-Connection-Api-Key": TELEGRAM_API_KEY,
+    "Content-Type": "application/json",
+  };
+
   const res = await fetch(`${GATEWAY_URL}${path}`, {
     method: "POST",
-    headers: {
-      "Authorization": `Bearer ${LOVABLE_API_KEY}`,
-      "X-Connection-Api-Key": TELEGRAM_API_KEY,
-      "Content-Type": "application/json",
-    },
+    headers: baseHeaders,
     body: JSON.stringify(payload),
   });
 
   const data = await res.json();
 
+  // Register bot command list — populates the "Menu" button in Telegram clients.
+  const commands = [
+    { command: "start", description: "Mulai / lihat status" },
+    { command: "cari", description: "Cari teman ngobrol baru" },
+    { command: "stop", description: "Akhiri obrolan / keluar antrean" },
+    { command: "profile", description: "Atur profil (gender, lokasi, minat, bio)" },
+    { command: "me", description: "Lihat profil & trust score kamu" },
+    { command: "premium", description: "Info fitur premium" },
+    { command: "upgrade", description: "Upgrade premium via QRIS (Rp20.000/bln)" },
+    { command: "unban", description: "Bayar untuk unban (Rp5–15rb)" },
+    { command: "batal", description: "Batalkan upload bukti transfer" },
+    { command: "report", description: "Laporkan lawan chat" },
+    { command: "block", description: "Blokir lawan chat" },
+    { command: "nonai", description: "Tolak AI Companion (hanya manusia)" },
+    { command: "ai", description: "Status AI Companion" },
+    { command: "help", description: "Bantuan & daftar perintah" },
+  ];
+
+  const cmdRes = await fetch(`${GATEWAY_URL}/setMyCommands`, {
+    method: "POST",
+    headers: baseHeaders,
+    body: JSON.stringify({ commands }),
+  });
+  const cmdData = await cmdRes.json();
+
   // Also fetch info for visibility
   const infoRes = await fetch(`${GATEWAY_URL}/getWebhookInfo`, {
     method: "POST",
-    headers: {
-      "Authorization": `Bearer ${LOVABLE_API_KEY}`,
-      "X-Connection-Api-Key": TELEGRAM_API_KEY,
-      "Content-Type": "application/json",
-    },
+    headers: baseHeaders,
     body: "{}",
   });
   const info = await infoRes.json();
 
-  return new Response(JSON.stringify({ action, webhookUrl, result: data, info }, null, 2), {
+  return new Response(JSON.stringify({ action, webhookUrl, result: data, commands: cmdData, info }, null, 2), {
     status: res.ok ? 200 : 502,
     headers: { ...corsHeaders, "Content-Type": "application/json" },
   });
