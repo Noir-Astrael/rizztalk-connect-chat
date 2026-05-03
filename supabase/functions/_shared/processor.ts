@@ -1,6 +1,6 @@
 // Shared Telegram update processor — used by both telegram-poll (cron) and telegram-webhook (instant).
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
-import { sendMessage, sendKeyboard, removeKeyboard, safeSend, sendPhoto, downloadTelegramFile, sendInlineKeyboard, answerCallbackQuery, editMessageReplyMarkup } from "./telegram.ts";
+import { sendMessage, safeSend, sendPhoto, downloadTelegramFile, sendInlineKeyboard, answerCallbackQuery, editMessageReplyMarkup, type InlineButton } from "./telegram.ts";
 import { PROVINCES_ID, PRESET_INTERESTS, findProvinceByText } from "./provinces-id.ts";
 import { ensureAiProfile, isAiConversation, aiReply, AI_TELEGRAM_USER_ID, AI_ALIAS } from "./ai-companion.ts";
 import { applyDetection } from "./bot-detection.ts";
@@ -120,33 +120,69 @@ function escapeHtml(text: string): string {
     .replace(/>/g, "&gt;");
 }
 
+// ============= INLINE MENU HELPERS =============
+// All "command lists" should be presented as inline buttons (in-bubble), never as
+// reply_keyboard popups. Users can still type the underlying "/command" if they prefer.
+
+function mainMenuButtons(profile: Profile): InlineButton[][] {
+  const premiumBadge = profile.is_premium ? "⭐ " : "";
+  return [
+    [
+      { text: "🎲 Cari Acak", callback_data: "search:any" },
+      { text: "📍 Cari per Provinsi", callback_data: "search:province" },
+    ],
+    [
+      { text: `${premiumBadge}♀️♂️ Cari per Gender`, callback_data: "search:gender" },
+    ],
+    [
+      { text: "🛑 Stop", callback_data: "cmd:stop" },
+      { text: "👤 Profil", callback_data: "cmd:me" },
+    ],
+    [
+      { text: "⭐ Premium", callback_data: "cmd:upgrade" },
+      { text: "🚫 Buka Ban", callback_data: "cmd:unban" },
+    ],
+    [
+      { text: "🚩 Report", callback_data: "cmd:report" },
+      { text: "🔇 Block", callback_data: "cmd:block" },
+    ],
+    [
+      { text: "🤖 AI Status", callback_data: "cmd:ai" },
+      { text: "❓ Bantuan", callback_data: "cmd:help" },
+    ],
+  ];
+}
+
+async function sendMainMenu(profile: Profile, headerText?: string) {
+  const text = headerText ?? `<b>📋 Aksi Cepat</b>\n\n` +
+    `Tap salah satu tombol — atau ketik command yang sama (mis. <code>/cari</code>, <code>/upgrade</code>).`;
+  await sendInlineKeyboard(profile.telegram_chat_id, text, mainMenuButtons(profile));
+}
+
+// Build paginated province picker (38 provinces in Indonesia, 2 cols × ~10 rows).
+function provinceButtons(): InlineButton[][] {
+  const rows: InlineButton[][] = [];
+  for (let i = 0; i < PROVINCES_ID.length; i += 2) {
+    const row: InlineButton[] = [
+      { text: PROVINCES_ID[i].name, callback_data: `searchprov:${PROVINCES_ID[i].code}` },
+    ];
+    if (PROVINCES_ID[i + 1]) {
+      row.push({ text: PROVINCES_ID[i + 1].name, callback_data: `searchprov:${PROVINCES_ID[i + 1].code}` });
+    }
+    rows.push(row);
+  }
+  rows.push([{ text: "❎ Batal", callback_data: "search:cancel" }]);
+  return rows;
+}
+
 const T = {
   welcome: (alias: string) =>
     `👋 Halo <b>${alias}</b>! Selamat datang di <b>RizzTalk</b> — random chat anonim untuk Indonesia.\n\n` +
     `Berikut semua perintah yang tersedia:`,
   startCommandList:
-    `<b>📋 Daftar Perintah RizzTalk</b>\n\n` +
-    `🚀 <b>Mulai</b>\n` +
-    `/start — mulai / lihat status\n` +
-    `/profile — atur profil (gender, lokasi, minat, bio)\n\n` +
-    `💬 <b>Chat</b>\n` +
-    `/cari — cari teman ngobrol baru\n` +
-    `/cari normal — filter trust ≥60\n` +
-    `/cari terpercaya — filter trust ≥90\n` +
-    `/cari sangat_terpercaya — filter trust ≥120\n` +
-    `/stop — akhiri obrolan / keluar antrean\n\n` +
-    `🛡️ <b>Keamanan</b>\n` +
-    `/report — laporkan lawan chat (spam/asusila/bot/scam)\n` +
-    `/block — blokir lawan chat agar tidak di-match lagi\n\n` +
-    `👤 <b>Profil & Premium</b>\n` +
-    `/me — lihat profil & riwayat trust score kamu\n` +
-    `/premium — info fitur premium\n` +
-    `/upgrade — upgrade premium via QRIS\n\n` +
-    `🤖 <b>AI Companion</b>\n` +
-    `/nonai — tolak AI Companion, hanya match manusia\n` +
-    `/ai — status AI Companion & riwayat 5 pesan AI\n\n` +
-    `/help — tampilkan bantuan ini lagi\n\n` +
-    `<i>💡 Jika tidak ada user nyata dalam 60 detik, AI Companion akan menyapa kamu secara transparan.</i>`,
+    `<b>📋 Aksi Cepat</b>\n\n` +
+    `Tap salah satu tombol di bawah, atau gunakan command "/" yang sama (mis. <code>/cari</code>, <code>/upgrade</code>).\n\n` +
+    `<i>💡 Pilih cara mencari teman ngobrol — atau buka menu lainnya.</i>`,
   help:
     `<b>Perintah RizzTalk</b>\n\n` +
     `/start — mulai / lihat status\n` +
@@ -653,12 +689,13 @@ async function tryMatch(
 
 async function handleStart(supabase: ReturnType<typeof getSupabase>, profile: Profile) {
   await sendMessage(profile.telegram_chat_id, T.welcome(profile.alias));
-  // Send full command list so user knows all available commands
-  await sendMessage(profile.telegram_chat_id, T.startCommandList);
   if (!profile.onboarding_completed) {
     await persistStep(supabase, profile.telegram_chat_id, { name: "set_alias" });
     await sendMessage(profile.telegram_chat_id, T.promptAlias);
+    return;
   }
+  // Show inline button menu (no popup keyboard).
+  await sendMainMenu(profile);
 }
 
 async function handleProfileStart(supabase: ReturnType<typeof getSupabase>, profile: Profile) {
@@ -694,6 +731,8 @@ async function handleMe(supabase: ReturnType<typeof getSupabase>, profile: Profi
 
 async function handleHelp(profile: Profile) {
   await sendMessage(profile.telegram_chat_id, T.help);
+  // Always end with the inline button menu so the user has tap-to-act options.
+  await sendMainMenu(profile, "Pilih aksi cepat:");
 }
 
 async function handleUnban(
@@ -881,11 +920,27 @@ async function handlePhotoProof(
     return true;
   }
 
-  // Save file_id to payment_request for admin reference
+  // Upload to payment-proofs storage so admin/owner can view via the web dashboard.
+  let storagePath: string | null = null;
+  try {
+    const ext = fileData.mime === "image/png" ? "png" : fileData.mime === "image/webp" ? "webp" : "jpg";
+    storagePath = `${profile.id}/${step.referenceCode}-${Date.now()}.${ext}`;
+    const bin = Uint8Array.from(atob(fileData.base64), (c) => c.charCodeAt(0));
+    const { error: upErr } = await supabase.storage
+      .from("payment-proofs")
+      .upload(storagePath, bin, { contentType: fileData.mime, upsert: true });
+    if (upErr) { console.error("upload proof failed", upErr); storagePath = null; }
+  } catch (e) {
+    console.error("upload proof exception", e);
+    storagePath = null;
+  }
+
+  // Save file_id + storage path to payment_request for admin reference
   await supabase
     .from("payment_requests")
     .update({
       proof_image_file_id: best.file_id,
+      proof_image_storage_path: storagePath,
       proof_note: msg.caption?.slice(0, 500) ?? null,
       updated_at: new Date().toISOString(),
     })
@@ -989,6 +1044,7 @@ async function handleCari(
   supabase: ReturnType<typeof getSupabase>,
   profile: Profile,
   trustFilter: TrustFilter = "any",
+  overrides: { province_code?: string | null; gender_pref?: "male" | "female" | "any" } = {},
 ) {
   if (profile.is_banned_until && new Date(profile.is_banned_until) > new Date()) {
     await sendMessage(profile.telegram_chat_id, T.bannedUntil(new Date(profile.is_banned_until).toLocaleString("id-ID")));
@@ -1003,11 +1059,25 @@ async function handleCari(
     await sendMessage(profile.telegram_chat_id, T.alreadyChatting);
     return;
   }
-  await sendMessage(profile.telegram_chat_id, T.searching(true, profile.province_name, trustFilter, profile.no_ai));
+  // Apply temporary overrides for this search (province / gender)
+  const effective: Profile = { ...profile };
+  if (overrides.province_code !== undefined) {
+    const prov = PROVINCES_ID.find((p) => p.code === overrides.province_code);
+    effective.province_code = prov?.code ?? profile.province_code;
+    effective.province_name = prov?.name ?? profile.province_name;
+  }
+  if (overrides.gender_pref) {
+    if (!profile.is_premium && overrides.gender_pref !== "any") {
+      await sendMessage(profile.telegram_chat_id, T.premiumOnlyGenderFilter);
+    } else {
+      effective.gender_preference = overrides.gender_pref;
+    }
+  }
+  await sendMessage(profile.telegram_chat_id, T.searching(true, effective.province_name, trustFilter, effective.no_ai));
 
-  const result = await tryMatch(supabase, profile, trustFilter);
+  const result = await tryMatch(supabase, effective, trustFilter);
   if (!result) {
-    await sendMessage(profile.telegram_chat_id, profile.no_ai ? T.inQueueNoAi : T.inQueue);
+    await sendMessage(profile.telegram_chat_id, effective.no_ai ? T.inQueueNoAi : T.inQueue);
     return;
   }
 
@@ -1156,8 +1226,7 @@ async function handleBlock(supabase: ReturnType<typeof getSupabase>, profile: Pr
   const durationSec = Math.round((Date.now() - new Date(conv.started_at).getTime()) / 1000);
   await endConversation(supabase, conv, profile.id);
 
-  try { await removeKeyboard(profile.telegram_chat_id, T.blockSuccess(partner.alias)); }
-  catch (e) { console.error("removeKeyboard failed", e); await safeSend(profile.telegram_chat_id, T.blockSuccess(partner.alias)); }
+  await safeSend(profile.telegram_chat_id, T.blockSuccess(partner.alias));
   await safeSend(partner.telegram_chat_id, T.blockNotice);
 
   const blockedDelta = -3;
@@ -1388,7 +1457,7 @@ async function handleStepInput(
     }
     await supabase.from("profiles").update({ gender: g }).eq("id", profile.id);
     await persistStep(supabase, profile.telegram_chat_id, { name: "set_province" });
-    await removeKeyboard(profile.telegram_chat_id, T.promptProvince);
+    await sendMessage(profile.telegram_chat_id, T.promptProvince);
     return true;
   }
 
@@ -1722,6 +1791,59 @@ async function handleCallbackQuery(
     return;
   }
 
+  // Search-type chooser (Acak / Provinsi / Gender)
+  if (ns === "search") {
+    if (action === "cancel") {
+      if (messageId) await editMessageReplyMarkup(chatId, messageId, null);
+      await answerCallbackQuery(cq.id, "Dibatalkan");
+      return;
+    }
+    if (action === "any") {
+      if (messageId) await editMessageReplyMarkup(chatId, messageId, null);
+      await answerCallbackQuery(cq.id);
+      return handleCari(supabase, profile, "any");
+    }
+    if (action === "province") {
+      if (messageId) await editMessageReplyMarkup(chatId, messageId, null);
+      await answerCallbackQuery(cq.id);
+      await sendInlineKeyboard(chatId, "📍 Pilih provinsi yang ingin kamu cari:", provinceButtons());
+      return;
+    }
+    if (action === "gender") {
+      if (!profile.is_premium) {
+        await answerCallbackQuery(cq.id, "Fitur Premium — ketik /upgrade", true);
+        return;
+      }
+      if (messageId) await editMessageReplyMarkup(chatId, messageId, null);
+      await answerCallbackQuery(cq.id);
+      await sendInlineKeyboard(chatId, "♀️♂️ Pilih gender lawan ngobrol:", [[
+        { text: "Pria", callback_data: "searchgen:male" },
+        { text: "Wanita", callback_data: "searchgen:female" },
+      ], [{ text: "❎ Batal", callback_data: "search:cancel" }]]);
+      return;
+    }
+  }
+
+  if (ns === "searchprov") {
+    if (messageId) await editMessageReplyMarkup(chatId, messageId, null);
+    await answerCallbackQuery(cq.id);
+    return handleCari(supabase, profile, "any", { province_code: action });
+  }
+
+  if (ns === "searchgen") {
+    if (!profile.is_premium) {
+      await answerCallbackQuery(cq.id, "Fitur Premium", true);
+      return;
+    }
+    if (action !== "male" && action !== "female") {
+      await answerCallbackQuery(cq.id);
+      return;
+    }
+    if (messageId) await editMessageReplyMarkup(chatId, messageId, null);
+    await answerCallbackQuery(cq.id);
+    return handleCari(supabase, profile, "any", { gender_pref: action });
+  }
+
   // Quick command shortcuts (used by /start menu)
   if (ns === "cmd") {
     if (messageId) await editMessageReplyMarkup(chatId, messageId, null);
@@ -1734,6 +1856,9 @@ async function handleCallbackQuery(
       case "premium": return handlePremium(profile);
       case "upgrade": return handleUpgrade(supabase, profile);
       case "unban": return handleUnban(supabase, profile, null);
+      case "report": return handleReport(supabase, profile);
+      case "block": return handleBlock(supabase, profile);
+      case "ai": return handleAiStatus(supabase, profile);
       case "help": return handleHelp(profile);
     }
     return;

@@ -246,6 +246,7 @@ export type Database = {
           plan: string
           profile_id: string
           proof_image_file_id: string | null
+          proof_image_storage_path: string | null
           proof_image_url: string | null
           proof_note: string | null
           reference_code: string
@@ -267,6 +268,7 @@ export type Database = {
           plan?: string
           profile_id: string
           proof_image_file_id?: string | null
+          proof_image_storage_path?: string | null
           proof_image_url?: string | null
           proof_note?: string | null
           reference_code: string
@@ -288,6 +290,7 @@ export type Database = {
           plan?: string
           profile_id?: string
           proof_image_file_id?: string | null
+          proof_image_storage_path?: string | null
           proof_image_url?: string | null
           proof_note?: string | null
           reference_code?: string
@@ -803,6 +806,10 @@ export type Database = {
         }
         Returns: string
       }
+      get_payment_proof_url: {
+        Args: { _reference_code: string }
+        Returns: Json
+      }
       has_role: {
         Args: {
           _profile_id: string
@@ -906,6 +913,10 @@ export type Database = {
         Returns: Json
       }
       reset_monthly_unban_credits: { Args: never; Returns: number }
+      revoke_premium: {
+        Args: { _profile_id: string; _reason?: string }
+        Returns: Json
+      }
     }
     Enums: {
       app_role: "admin" | "moderator" | "user" | "owner"
