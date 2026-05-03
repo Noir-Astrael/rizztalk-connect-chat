@@ -120,6 +120,61 @@ function escapeHtml(text: string): string {
     .replace(/>/g, "&gt;");
 }
 
+// ============= INLINE MENU HELPERS =============
+// All "command lists" should be presented as inline buttons (in-bubble), never as
+// reply_keyboard popups. Users can still type the underlying "/command" if they prefer.
+
+function mainMenuButtons(profile: Profile): InlineButton[][] {
+  const premiumBadge = profile.is_premium ? "⭐ " : "";
+  return [
+    [
+      { text: "🎲 Cari Acak", callback_data: "search:any" },
+      { text: "📍 Cari per Provinsi", callback_data: "search:province" },
+    ],
+    [
+      { text: `${premiumBadge}♀️♂️ Cari per Gender`, callback_data: "search:gender" },
+    ],
+    [
+      { text: "🛑 Stop", callback_data: "cmd:stop" },
+      { text: "👤 Profil", callback_data: "cmd:me" },
+    ],
+    [
+      { text: "⭐ Premium", callback_data: "cmd:upgrade" },
+      { text: "🚫 Buka Ban", callback_data: "cmd:unban" },
+    ],
+    [
+      { text: "🚩 Report", callback_data: "cmd:report" },
+      { text: "🔇 Block", callback_data: "cmd:block" },
+    ],
+    [
+      { text: "🤖 AI Status", callback_data: "cmd:ai" },
+      { text: "❓ Bantuan", callback_data: "cmd:help" },
+    ],
+  ];
+}
+
+async function sendMainMenu(profile: Profile, headerText?: string) {
+  const text = headerText ?? `<b>📋 Aksi Cepat</b>\n\n` +
+    `Tap salah satu tombol — atau ketik command yang sama (mis. <code>/cari</code>, <code>/upgrade</code>).`;
+  await sendInlineKeyboard(profile.telegram_chat_id, text, mainMenuButtons(profile));
+}
+
+// Build paginated province picker (38 provinces in Indonesia, 2 cols × ~10 rows).
+function provinceButtons(): InlineButton[][] {
+  const rows: InlineButton[][] = [];
+  for (let i = 0; i < PROVINCES_ID.length; i += 2) {
+    const row: InlineButton[] = [
+      { text: PROVINCES_ID[i].name, callback_data: `searchprov:${PROVINCES_ID[i].code}` },
+    ];
+    if (PROVINCES_ID[i + 1]) {
+      row.push({ text: PROVINCES_ID[i + 1].name, callback_data: `searchprov:${PROVINCES_ID[i + 1].code}` });
+    }
+    rows.push(row);
+  }
+  rows.push([{ text: "❎ Batal", callback_data: "search:cancel" }]);
+  return rows;
+}
+
 const T = {
   welcome: (alias: string) =>
     `👋 Halo <b>${alias}</b>! Selamat datang di <b>RizzTalk</b> — random chat anonim untuk Indonesia.\n\n` +
