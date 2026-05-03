@@ -1468,9 +1468,18 @@ async function handleStepInput(
     };
     const reason = reasonMap[text.trim().toLowerCase()];
     if (!reason) {
-      await sendKeyboard(profile.telegram_chat_id, "Pilih dari tombol di bawah:", [
-        ["Spam", "Asusila", "Bot"],
-        ["Scam", "Pelecehan", "Lainnya"],
+      await sendInlineKeyboard(profile.telegram_chat_id, "Pilih alasan dari tombol berikut:", [
+        [
+          { text: "Spam", callback_data: "report:spam" },
+          { text: "Asusila", callback_data: "report:nsfw" },
+          { text: "Bot", callback_data: "report:bot" },
+        ],
+        [
+          { text: "Scam", callback_data: "report:scam" },
+          { text: "Pelecehan", callback_data: "report:harassment" },
+          { text: "Lainnya", callback_data: "report:other" },
+        ],
+        [{ text: "❎ Batal", callback_data: "report:cancel" }],
       ]);
       return true;
     }
