@@ -920,11 +920,27 @@ async function handlePhotoProof(
     return true;
   }
 
-  // Save file_id to payment_request for admin reference
+  // Upload to payment-proofs storage so admin/owner can view via the web dashboard.
+  let storagePath: string | null = null;
+  try {
+    const ext = fileData.mime === "image/png" ? "png" : fileData.mime === "image/webp" ? "webp" : "jpg";
+    storagePath = `${profile.id}/${step.referenceCode}-${Date.now()}.${ext}`;
+    const bin = Uint8Array.from(atob(fileData.base64), (c) => c.charCodeAt(0));
+    const { error: upErr } = await supabase.storage
+      .from("payment-proofs")
+      .upload(storagePath, bin, { contentType: fileData.mime, upsert: true });
+    if (upErr) { console.error("upload proof failed", upErr); storagePath = null; }
+  } catch (e) {
+    console.error("upload proof exception", e);
+    storagePath = null;
+  }
+
+  // Save file_id + storage path to payment_request for admin reference
   await supabase
     .from("payment_requests")
     .update({
       proof_image_file_id: best.file_id,
+      proof_image_storage_path: storagePath,
       proof_note: msg.caption?.slice(0, 500) ?? null,
       updated_at: new Date().toISOString(),
     })
