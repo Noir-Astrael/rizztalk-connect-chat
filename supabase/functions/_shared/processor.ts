@@ -708,14 +708,18 @@ async function handleUnban(
   }
   const sev = (arg ?? "").toLowerCase();
   if (!["light", "medium", "severe"].includes(sev)) {
-    await sendMessage(
+    await sendInlineKeyboard(
       profile.telegram_chat_id,
-      `🚫 <b>Unban Berbayar</b>\n\n` +
-      `Pilih tingkat ban kamu:\n` +
-      `• <code>/unban light</code> — Rp5.000 (ban ringan, &lt;7 report)\n` +
-      `• <code>/unban medium</code> — Rp10.000 (ban sedang, 7–9 report)\n` +
-      `• <code>/unban severe</code> — Rp15.000 (ban berat, ≥10 report)\n\n` +
-      `Atau premium aktif dapat 1× unban gratis/bulan via /upgrade.`,
+      `🚫 <b>Unban Berbayar</b>\n\nPilih tingkat ban kamu:\n` +
+      `• Ringan — Rp5.000 (&lt;7 report)\n` +
+      `• Sedang — Rp10.000 (7–9 report)\n` +
+      `• Berat — Rp15.000 (≥10 report)\n\n` +
+      `Premium aktif dapat 1× unban gratis (light) per bulan via /upgrade.`,
+      [[
+        { text: "Ringan Rp5rb", callback_data: "unban:light" },
+        { text: "Sedang Rp10rb", callback_data: "unban:medium" },
+        { text: "Berat Rp15rb", callback_data: "unban:severe" },
+      ]],
     );
     return;
   }
