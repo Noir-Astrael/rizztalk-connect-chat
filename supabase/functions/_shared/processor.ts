@@ -1441,7 +1441,7 @@ async function handleStepInput(
     }
     await supabase.from("profiles").update({ gender: g }).eq("id", profile.id);
     await persistStep(supabase, profile.telegram_chat_id, { name: "set_province" });
-    await removeKeyboard(profile.telegram_chat_id, T.promptProvince);
+    await sendMessage(profile.telegram_chat_id, T.promptProvince);
     return true;
   }
 
