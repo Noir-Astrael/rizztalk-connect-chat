@@ -1775,6 +1775,59 @@ async function handleCallbackQuery(
     return;
   }
 
+  // Search-type chooser (Acak / Provinsi / Gender)
+  if (ns === "search") {
+    if (action === "cancel") {
+      if (messageId) await editMessageReplyMarkup(chatId, messageId, null);
+      await answerCallbackQuery(cq.id, "Dibatalkan");
+      return;
+    }
+    if (action === "any") {
+      if (messageId) await editMessageReplyMarkup(chatId, messageId, null);
+      await answerCallbackQuery(cq.id);
+      return handleCari(supabase, profile, "any");
+    }
+    if (action === "province") {
+      if (messageId) await editMessageReplyMarkup(chatId, messageId, null);
+      await answerCallbackQuery(cq.id);
+      await sendInlineKeyboard(chatId, "📍 Pilih provinsi yang ingin kamu cari:", provinceButtons());
+      return;
+    }
+    if (action === "gender") {
+      if (!profile.is_premium) {
+        await answerCallbackQuery(cq.id, "Fitur Premium — ketik /upgrade", true);
+        return;
+      }
+      if (messageId) await editMessageReplyMarkup(chatId, messageId, null);
+      await answerCallbackQuery(cq.id);
+      await sendInlineKeyboard(chatId, "♀️♂️ Pilih gender lawan ngobrol:", [[
+        { text: "Pria", callback_data: "searchgen:male" },
+        { text: "Wanita", callback_data: "searchgen:female" },
+      ], [{ text: "❎ Batal", callback_data: "search:cancel" }]]);
+      return;
+    }
+  }
+
+  if (ns === "searchprov") {
+    if (messageId) await editMessageReplyMarkup(chatId, messageId, null);
+    await answerCallbackQuery(cq.id);
+    return handleCari(supabase, profile, "any", { province_code: action });
+  }
+
+  if (ns === "searchgen") {
+    if (!profile.is_premium) {
+      await answerCallbackQuery(cq.id, "Fitur Premium", true);
+      return;
+    }
+    if (action !== "male" && action !== "female") {
+      await answerCallbackQuery(cq.id);
+      return;
+    }
+    if (messageId) await editMessageReplyMarkup(chatId, messageId, null);
+    await answerCallbackQuery(cq.id);
+    return handleCari(supabase, profile, "any", { gender_pref: action });
+  }
+
   // Quick command shortcuts (used by /start menu)
   if (ns === "cmd") {
     if (messageId) await editMessageReplyMarkup(chatId, messageId, null);
@@ -1787,6 +1840,9 @@ async function handleCallbackQuery(
       case "premium": return handlePremium(profile);
       case "upgrade": return handleUpgrade(supabase, profile);
       case "unban": return handleUnban(supabase, profile, null);
+      case "report": return handleReport(supabase, profile);
+      case "block": return handleBlock(supabase, profile);
+      case "ai": return handleAiStatus(supabase, profile);
       case "help": return handleHelp(profile);
     }
     return;
