@@ -125,28 +125,9 @@ const T = {
     `👋 Halo <b>${alias}</b>! Selamat datang di <b>RizzTalk</b> — random chat anonim untuk Indonesia.\n\n` +
     `Berikut semua perintah yang tersedia:`,
   startCommandList:
-    `<b>📋 Daftar Perintah RizzTalk</b>\n\n` +
-    `🚀 <b>Mulai</b>\n` +
-    `/start — mulai / lihat status\n` +
-    `/profile — atur profil (gender, lokasi, minat, bio)\n\n` +
-    `💬 <b>Chat</b>\n` +
-    `/cari — cari teman ngobrol baru\n` +
-    `/cari normal — filter trust ≥60\n` +
-    `/cari terpercaya — filter trust ≥90\n` +
-    `/cari sangat_terpercaya — filter trust ≥120\n` +
-    `/stop — akhiri obrolan / keluar antrean\n\n` +
-    `🛡️ <b>Keamanan</b>\n` +
-    `/report — laporkan lawan chat (spam/asusila/bot/scam)\n` +
-    `/block — blokir lawan chat agar tidak di-match lagi\n\n` +
-    `👤 <b>Profil & Premium</b>\n` +
-    `/me — lihat profil & riwayat trust score kamu\n` +
-    `/premium — info fitur premium\n` +
-    `/upgrade — upgrade premium via QRIS\n\n` +
-    `🤖 <b>AI Companion</b>\n` +
-    `/nonai — tolak AI Companion, hanya match manusia\n` +
-    `/ai — status AI Companion & riwayat 5 pesan AI\n\n` +
-    `/help — tampilkan bantuan ini lagi\n\n` +
-    `<i>💡 Jika tidak ada user nyata dalam 60 detik, AI Companion akan menyapa kamu secara transparan.</i>`,
+    `<b>📋 Aksi Cepat</b>\n\n` +
+    `Tap salah satu tombol di bawah, atau gunakan command "/" yang sama (mis. <code>/cari</code>, <code>/upgrade</code>).\n\n` +
+    `<i>💡 Pilih cara mencari teman ngobrol — atau buka menu lainnya.</i>`,
   help:
     `<b>Perintah RizzTalk</b>\n\n` +
     `/start — mulai / lihat status\n` +
