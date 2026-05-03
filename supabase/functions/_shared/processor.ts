@@ -689,12 +689,13 @@ async function tryMatch(
 
 async function handleStart(supabase: ReturnType<typeof getSupabase>, profile: Profile) {
   await sendMessage(profile.telegram_chat_id, T.welcome(profile.alias));
-  // Send full command list so user knows all available commands
-  await sendMessage(profile.telegram_chat_id, T.startCommandList);
   if (!profile.onboarding_completed) {
     await persistStep(supabase, profile.telegram_chat_id, { name: "set_alias" });
     await sendMessage(profile.telegram_chat_id, T.promptAlias);
+    return;
   }
+  // Show inline button menu (no popup keyboard).
+  await sendMainMenu(profile);
 }
 
 async function handleProfileStart(supabase: ReturnType<typeof getSupabase>, profile: Profile) {
@@ -730,6 +731,8 @@ async function handleMe(supabase: ReturnType<typeof getSupabase>, profile: Profi
 
 async function handleHelp(profile: Profile) {
   await sendMessage(profile.telegram_chat_id, T.help);
+  // Always end with the inline button menu so the user has tap-to-act options.
+  await sendMainMenu(profile, "Pilih aksi cepat:");
 }
 
 async function handleUnban(
