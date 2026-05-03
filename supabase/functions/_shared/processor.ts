@@ -1376,7 +1376,11 @@ async function handleStepInput(
     };
     const g = map[text.trim().toLowerCase()];
     if (!g) {
-      await sendKeyboard(profile.telegram_chat_id, "Pilih dari tombol di bawah:", [["Pria", "Wanita", "Lainnya"]]);
+      await sendInlineKeyboard(profile.telegram_chat_id, "Pilih salah satu:", [[
+        { text: "Pria", callback_data: "gender:male" },
+        { text: "Wanita", callback_data: "gender:female" },
+        { text: "Lainnya", callback_data: "gender:other" },
+      ]]);
       return true;
     }
     await supabase.from("profiles").update({ gender: g }).eq("id", profile.id);
