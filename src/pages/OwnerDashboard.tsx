@@ -450,10 +450,18 @@ export default function OwnerDashboard() {
                         </td>
                         <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">{new Date(p.created_at).toLocaleString("id-ID")}</td>
                         <td className="px-4 py-3">
-                          {p.status === "pending" && (
-                            <div className="flex gap-1">
+                          {p.status === "pending" ? (
+                            <div className="flex flex-wrap gap-1">
+                              <button onClick={() => viewProof(p)} className="text-xs px-2 py-1 rounded-lg bg-blue-400/15 text-blue-400 hover:bg-blue-400/25">Lihat Bukti</button>
                               <button onClick={() => approvePayment(p)} className="text-xs px-2 py-1 rounded-lg bg-emerald-400/15 text-emerald-400 hover:bg-emerald-400/25">Approve</button>
                               <button onClick={() => rejectPayment(p)} className="text-xs px-2 py-1 rounded-lg bg-red-400/15 text-red-400 hover:bg-red-400/25">Reject</button>
+                            </div>
+                          ) : (
+                            <div className="flex flex-wrap gap-1">
+                              <button onClick={() => viewProof(p)} className="text-xs px-2 py-1 rounded-lg bg-blue-400/15 text-blue-400 hover:bg-blue-400/25">Lihat Bukti</button>
+                              {p.status === "approved" && p.payment_kind === "premium" && (
+                                <button onClick={() => revokePremium(p)} className="text-xs px-2 py-1 rounded-lg bg-orange-400/15 text-orange-400 hover:bg-orange-400/25">Cabut Premium</button>
+                              )}
                             </div>
                           )}
                         </td>
