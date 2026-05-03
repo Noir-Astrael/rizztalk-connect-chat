@@ -1111,9 +1111,18 @@ async function handleReport(supabase: ReturnType<typeof getSupabase>, profile: P
     conversationId: conv.id,
     reportedId,
   });
-  await sendKeyboard(profile.telegram_chat_id, T.reportPrompt, [
-    ["Spam", "Asusila", "Bot"],
-    ["Scam", "Pelecehan", "Lainnya"],
+  await sendInlineKeyboard(profile.telegram_chat_id, T.reportPrompt, [
+    [
+      { text: "Spam", callback_data: "report:spam" },
+      { text: "Asusila", callback_data: "report:nsfw" },
+      { text: "Bot", callback_data: "report:bot" },
+    ],
+    [
+      { text: "Scam", callback_data: "report:scam" },
+      { text: "Pelecehan", callback_data: "report:harassment" },
+      { text: "Lainnya", callback_data: "report:other" },
+    ],
+    [{ text: "❎ Batal", callback_data: "report:cancel" }],
   ]);
 }
 
