@@ -1360,7 +1360,11 @@ async function handleStepInput(
     }
     await supabase.from("profiles").update({ alias }).eq("id", profile.id);
     await persistStep(supabase, profile.telegram_chat_id, { name: "set_gender" });
-    await sendKeyboard(profile.telegram_chat_id, T.promptGender, [["Pria", "Wanita", "Lainnya"]]);
+    await sendInlineKeyboard(profile.telegram_chat_id, T.promptGender, [[
+      { text: "Pria", callback_data: "gender:male" },
+      { text: "Wanita", callback_data: "gender:female" },
+      { text: "Lainnya", callback_data: "gender:other" },
+    ]]);
     return true;
   }
 
