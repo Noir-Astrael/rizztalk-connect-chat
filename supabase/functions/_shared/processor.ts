@@ -161,7 +161,6 @@ const T = {
     `/premium — upgrade premium\n` +
     `/upgrade — lihat QRIS & instruksi bayar\n` +
     `/unban [light|medium|severe] — bayar untuk unban (Rp5–15rb)\n` +
-    `/unban [light|medium|severe] — bayar untuk unban (Rp5–15rb)\n` +
     `/batal — batalkan upload bukti transfer (jika salah kirim)\n` +
     `/nonai — tolak AI Companion, hanya match manusia\n` +
     `/ai — status AI Companion & riwayat 5 pesan AI\n` +
