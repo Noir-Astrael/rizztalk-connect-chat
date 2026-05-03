@@ -1651,6 +1651,11 @@ async function handleAiStatus(supabase: ReturnType<typeof getSupabase>, profile:
 }
 
 export async function processUpdate(supabase: ReturnType<typeof getSupabase>, update: TgUpdate) {
+  // Handle callback_query (inline button taps) — no popup keyboard.
+  if (update.callback_query) {
+    await handleCallbackQuery(supabase, update.callback_query);
+    return;
+  }
   const msg = update.message;
   if (!msg || !msg.from) return;
   // Accept text OR photo (foto bukti transfer)
