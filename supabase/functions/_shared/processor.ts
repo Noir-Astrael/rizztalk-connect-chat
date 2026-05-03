@@ -1650,6 +1650,95 @@ async function handleAiStatus(supabase: ReturnType<typeof getSupabase>, profile:
   }
 }
 
+// ============= Callback query (inline button taps) =============
+async function handleCallbackQuery(
+  supabase: ReturnType<typeof getSupabase>,
+  cq: TgCallbackQuery,
+) {
+  const data = cq.data ?? "";
+  const chatId = cq.message?.chat.id;
+  const messageId = cq.message?.message_id;
+  if (!chatId) {
+    await answerCallbackQuery(cq.id);
+    return;
+  }
+
+  // Build a synthetic msg for ensureProfile
+  const synthetic: TgMessage = {
+    message_id: messageId ?? 0,
+    from: cq.from,
+    chat: { id: chatId, type: "private" },
+    date: Math.floor(Date.now() / 1000),
+  };
+  const profile = await ensureProfile(supabase, synthetic);
+  const step = await loadStep(supabase, chatId, profile);
+
+  const [ns, action] = data.split(":");
+
+  // Gender selection (onboarding)
+  if (ns === "gender" && step.name === "set_gender") {
+    const map: Record<string, "male" | "female" | "other"> = { male: "male", female: "female", other: "other" };
+    const g = map[action];
+    if (!g) {
+      await answerCallbackQuery(cq.id, "Pilihan tidak valid");
+      return;
+    }
+    await supabase.from("profiles").update({ gender: g }).eq("id", profile.id);
+    await persistStep(supabase, chatId, { name: "set_province" });
+    if (messageId) await editMessageReplyMarkup(chatId, messageId, null);
+    await answerCallbackQuery(cq.id, `Gender: ${g === "male" ? "Pria" : g === "female" ? "Wanita" : "Lainnya"}`);
+    await sendMessage(chatId, T.promptProvince);
+    return;
+  }
+
+  // Report reason selection
+  if (ns === "report" && step.name === "await_report_reason") {
+    if (action === "cancel") {
+      await persistStep(supabase, chatId, { name: "idle" });
+      if (messageId) await editMessageReplyMarkup(chatId, messageId, null);
+      await answerCallbackQuery(cq.id, "Dibatalkan");
+      await sendMessage(chatId, "❎ Laporan dibatalkan.");
+      return;
+    }
+    const valid = ["spam", "nsfw", "bot", "scam", "harassment", "other"] as const;
+    if (!valid.includes(action as typeof valid[number])) {
+      await answerCallbackQuery(cq.id, "Pilihan tidak valid");
+      return;
+    }
+    if (messageId) await editMessageReplyMarkup(chatId, messageId, null);
+    await answerCallbackQuery(cq.id, "Laporan diproses…");
+    await submitReport(supabase, profile, { conversationId: step.conversationId, reportedId: step.reportedId }, action as typeof valid[number]);
+    return;
+  }
+
+  // Unban severity selection
+  if (ns === "unban") {
+    if (messageId) await editMessageReplyMarkup(chatId, messageId, null);
+    await answerCallbackQuery(cq.id);
+    await handleUnban(supabase, profile, action);
+    return;
+  }
+
+  // Quick command shortcuts (used by /start menu)
+  if (ns === "cmd") {
+    if (messageId) await editMessageReplyMarkup(chatId, messageId, null);
+    await answerCallbackQuery(cq.id);
+    switch (action) {
+      case "cari": return handleCari(supabase, profile, "any");
+      case "stop": return handleStop(supabase, profile);
+      case "profile": return handleProfileStart(supabase, profile);
+      case "me": return handleMe(supabase, profile);
+      case "premium": return handlePremium(profile);
+      case "upgrade": return handleUpgrade(supabase, profile);
+      case "unban": return handleUnban(supabase, profile, null);
+      case "help": return handleHelp(profile);
+    }
+    return;
+  }
+
+  await answerCallbackQuery(cq.id);
+}
+
 export async function processUpdate(supabase: ReturnType<typeof getSupabase>, update: TgUpdate) {
   // Handle callback_query (inline button taps) — no popup keyboard.
   if (update.callback_query) {
