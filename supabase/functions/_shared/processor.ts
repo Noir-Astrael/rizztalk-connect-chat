@@ -16,7 +16,13 @@ export type TgMessage = {
   photo?: TgPhotoSize[];
   date: number;
 };
-export type TgUpdate = { update_id: number; message?: TgMessage };
+export type TgCallbackQuery = {
+  id: string;
+  from: TgUser;
+  message?: TgMessage;
+  data?: string;
+};
+export type TgUpdate = { update_id: number; message?: TgMessage; callback_query?: TgCallbackQuery };
 
 type Profile = {
   id: string;
