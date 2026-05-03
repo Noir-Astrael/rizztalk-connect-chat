@@ -180,7 +180,7 @@ export async function getUpdates(offset: number, timeout = 50) {
   return tgFetch("/getUpdates", {
     offset,
     timeout,
-    allowed_updates: ["message"],
+    allowed_updates: ["message", "callback_query"],
   });
 }
 
