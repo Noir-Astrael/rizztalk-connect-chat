@@ -1,6 +1,6 @@
 // Shared Telegram update processor — used by both telegram-poll (cron) and telegram-webhook (instant).
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
-import { sendMessage, sendKeyboard, removeKeyboard, safeSend, sendPhoto, downloadTelegramFile } from "./telegram.ts";
+import { sendMessage, sendKeyboard, removeKeyboard, safeSend, sendPhoto, downloadTelegramFile, sendInlineKeyboard, answerCallbackQuery, editMessageReplyMarkup } from "./telegram.ts";
 import { PROVINCES_ID, PRESET_INTERESTS, findProvinceByText } from "./provinces-id.ts";
 import { ensureAiProfile, isAiConversation, aiReply, AI_TELEGRAM_USER_ID, AI_ALIAS } from "./ai-companion.ts";
 import { applyDetection } from "./bot-detection.ts";
@@ -16,7 +16,13 @@ export type TgMessage = {
   photo?: TgPhotoSize[];
   date: number;
 };
-export type TgUpdate = { update_id: number; message?: TgMessage };
+export type TgCallbackQuery = {
+  id: string;
+  from: TgUser;
+  message?: TgMessage;
+  data?: string;
+};
+export type TgUpdate = { update_id: number; message?: TgMessage; callback_query?: TgCallbackQuery };
 
 type Profile = {
   id: string;
@@ -154,7 +160,6 @@ const T = {
     `/me — lihat profil & riwayat trust score kamu\n` +
     `/premium — upgrade premium\n` +
     `/upgrade — lihat QRIS & instruksi bayar\n` +
-    `/unban [light|medium|severe] — bayar untuk unban (Rp5–15rb)\n` +
     `/unban [light|medium|severe] — bayar untuk unban (Rp5–15rb)\n` +
     `/batal — batalkan upload bukti transfer (jika salah kirim)\n` +
     `/nonai — tolak AI Companion, hanya match manusia\n` +
@@ -702,14 +707,18 @@ async function handleUnban(
   }
   const sev = (arg ?? "").toLowerCase();
   if (!["light", "medium", "severe"].includes(sev)) {
-    await sendMessage(
+    await sendInlineKeyboard(
       profile.telegram_chat_id,
-      `🚫 <b>Unban Berbayar</b>\n\n` +
-      `Pilih tingkat ban kamu:\n` +
-      `• <code>/unban light</code> — Rp5.000 (ban ringan, &lt;7 report)\n` +
-      `• <code>/unban medium</code> — Rp10.000 (ban sedang, 7–9 report)\n` +
-      `• <code>/unban severe</code> — Rp15.000 (ban berat, ≥10 report)\n\n` +
-      `Atau premium aktif dapat 1× unban gratis/bulan via /upgrade.`,
+      `🚫 <b>Unban Berbayar</b>\n\nPilih tingkat ban kamu:\n` +
+      `• Ringan — Rp5.000 (&lt;7 report)\n` +
+      `• Sedang — Rp10.000 (7–9 report)\n` +
+      `• Berat — Rp15.000 (≥10 report)\n\n` +
+      `Premium aktif dapat 1× unban gratis (light) per bulan via /upgrade.`,
+      [[
+        { text: "Ringan Rp5rb", callback_data: "unban:light" },
+        { text: "Sedang Rp10rb", callback_data: "unban:medium" },
+        { text: "Berat Rp15rb", callback_data: "unban:severe" },
+      ]],
     );
     return;
   }
@@ -1105,9 +1114,18 @@ async function handleReport(supabase: ReturnType<typeof getSupabase>, profile: P
     conversationId: conv.id,
     reportedId,
   });
-  await sendKeyboard(profile.telegram_chat_id, T.reportPrompt, [
-    ["Spam", "Asusila", "Bot"],
-    ["Scam", "Pelecehan", "Lainnya"],
+  await sendInlineKeyboard(profile.telegram_chat_id, T.reportPrompt, [
+    [
+      { text: "Spam", callback_data: "report:spam" },
+      { text: "Asusila", callback_data: "report:nsfw" },
+      { text: "Bot", callback_data: "report:bot" },
+    ],
+    [
+      { text: "Scam", callback_data: "report:scam" },
+      { text: "Pelecehan", callback_data: "report:harassment" },
+      { text: "Lainnya", callback_data: "report:other" },
+    ],
+    [{ text: "❎ Batal", callback_data: "report:cancel" }],
   ]);
 }
 
@@ -1345,7 +1363,11 @@ async function handleStepInput(
     }
     await supabase.from("profiles").update({ alias }).eq("id", profile.id);
     await persistStep(supabase, profile.telegram_chat_id, { name: "set_gender" });
-    await sendKeyboard(profile.telegram_chat_id, T.promptGender, [["Pria", "Wanita", "Lainnya"]]);
+    await sendInlineKeyboard(profile.telegram_chat_id, T.promptGender, [[
+      { text: "Pria", callback_data: "gender:male" },
+      { text: "Wanita", callback_data: "gender:female" },
+      { text: "Lainnya", callback_data: "gender:other" },
+    ]]);
     return true;
   }
 
@@ -1357,7 +1379,11 @@ async function handleStepInput(
     };
     const g = map[text.trim().toLowerCase()];
     if (!g) {
-      await sendKeyboard(profile.telegram_chat_id, "Pilih dari tombol di bawah:", [["Pria", "Wanita", "Lainnya"]]);
+      await sendInlineKeyboard(profile.telegram_chat_id, "Pilih salah satu:", [[
+        { text: "Pria", callback_data: "gender:male" },
+        { text: "Wanita", callback_data: "gender:female" },
+        { text: "Lainnya", callback_data: "gender:other" },
+      ]]);
       return true;
     }
     await supabase.from("profiles").update({ gender: g }).eq("id", profile.id);
@@ -1445,70 +1471,82 @@ async function handleStepInput(
     };
     const reason = reasonMap[text.trim().toLowerCase()];
     if (!reason) {
-      await sendKeyboard(profile.telegram_chat_id, "Pilih dari tombol di bawah:", [
-        ["Spam", "Asusila", "Bot"],
-        ["Scam", "Pelecehan", "Lainnya"],
+      await sendInlineKeyboard(profile.telegram_chat_id, "Pilih alasan dari tombol berikut:", [
+        [
+          { text: "Spam", callback_data: "report:spam" },
+          { text: "Asusila", callback_data: "report:nsfw" },
+          { text: "Bot", callback_data: "report:bot" },
+        ],
+        [
+          { text: "Scam", callback_data: "report:scam" },
+          { text: "Pelecehan", callback_data: "report:harassment" },
+          { text: "Lainnya", callback_data: "report:other" },
+        ],
+        [{ text: "❎ Batal", callback_data: "report:cancel" }],
       ]);
       return true;
     }
-
-    const { data: existing } = await supabase
-      .from("user_reports")
-      .select("id")
-      .eq("reporter_id", profile.id)
-      .eq("reported_id", step.reportedId)
-      .eq("conversation_id", step.conversationId)
-      .maybeSingle();
-
-    if (existing) {
-      await persistStep(supabase, profile.telegram_chat_id, { name: "idle" });
-      await removeKeyboard(profile.telegram_chat_id, T.reportAlready);
-      return true;
-    }
-
-    await supabase.from("user_reports").insert({
-      reporter_id: profile.id,
-      reported_id: step.reportedId,
-      conversation_id: step.conversationId,
-      reason,
-    });
-
-    // Re-fetch reported AFTER trigger handle_new_report ran (it already deducts -5 and may auto-ban).
-    // We log the trust_event via record_trust_event with delta=0 so the audit trail captures the verified report
-    // (the actual −5 was applied by the trigger to keep score capped & atomic).
-    const reported = await getProfileById(supabase, step.reportedId);
-    const banned = !!reported.is_banned_until && new Date(reported.is_banned_until) > new Date();
-    const banUntil = banned ? new Date(reported.is_banned_until!).toLocaleString("id-ID") : null;
-    const reasonText = `Report terverifikasi (${reason})${banned ? " · auto-ban 24 jam tercapai" : ""}`;
-
-    // Audit trail event: delta 0 (already applied by trigger) — keeps history consistent without double-counting.
-    await supabase.from("trust_events").insert({
-      profile_id: reported.id,
-      conversation_id: step.conversationId,
-      event_type: banned ? "ban" : "reported",
-      delta: -5,
-      new_score: reported.trust_score, // post-trigger score
-      reason: reasonText,
-    });
-
-    const conv = await getActiveConversation(supabase, profile.id);
-    if (conv && conv.id === step.conversationId) {
-      await endConversation(supabase, conv, profile.id);
-    }
-
-    await persistStep(supabase, profile.telegram_chat_id, { name: "idle" });
-
-    try { await removeKeyboard(profile.telegram_chat_id, T.reportSuccess); }
-    catch (e) { console.error("removeKeyboard failed", e); await safeSend(profile.telegram_chat_id, T.reportSuccess); }
-    await safeSend(profile.telegram_chat_id, T.reportSummaryReporter(profile.trust_score));
-    if (reported.telegram_user_id !== AI_TELEGRAM_USER_ID) {
-      await safeSend(reported.telegram_chat_id, T.partnerLeft);
-      await safeSend(reported.telegram_chat_id, T.reportSummaryReported(reported.trust_score, banned, banUntil));
-    }
+    await submitReport(supabase, profile, step, reason);
     return true;
   }
 
   return false;
+}
+
+// Shared report submission logic (dipakai oleh teks & callback_query).
+async function submitReport(
+  supabase: ReturnType<typeof getSupabase>,
+  profile: Profile,
+  step: { conversationId: string; reportedId: string },
+  reason: "spam" | "nsfw" | "bot" | "scam" | "harassment" | "other",
+) {
+  const { data: existing } = await supabase
+    .from("user_reports")
+    .select("id")
+    .eq("reporter_id", profile.id)
+    .eq("reported_id", step.reportedId)
+    .eq("conversation_id", step.conversationId)
+    .maybeSingle();
+
+  if (existing) {
+    await persistStep(supabase, profile.telegram_chat_id, { name: "idle" });
+    await safeSend(profile.telegram_chat_id, T.reportAlready);
+    return;
+  }
+
+  await supabase.from("user_reports").insert({
+    reporter_id: profile.id,
+    reported_id: step.reportedId,
+    conversation_id: step.conversationId,
+    reason,
+  });
+
+  const reported = await getProfileById(supabase, step.reportedId);
+  const banned = !!reported.is_banned_until && new Date(reported.is_banned_until) > new Date();
+  const banUntil = banned ? new Date(reported.is_banned_until!).toLocaleString("id-ID") : null;
+  const reasonText = `Report terverifikasi (${reason})${banned ? " · auto-ban 24 jam tercapai" : ""}`;
+
+  await supabase.from("trust_events").insert({
+    profile_id: reported.id,
+    conversation_id: step.conversationId,
+    event_type: banned ? "ban" : "reported",
+    delta: -5,
+    new_score: reported.trust_score,
+    reason: reasonText,
+  });
+
+  const conv = await getActiveConversation(supabase, profile.id);
+  if (conv && conv.id === step.conversationId) {
+    await endConversation(supabase, conv, profile.id);
+  }
+
+  await persistStep(supabase, profile.telegram_chat_id, { name: "idle" });
+  await safeSend(profile.telegram_chat_id, T.reportSuccess);
+  await safeSend(profile.telegram_chat_id, T.reportSummaryReporter(profile.trust_score));
+  if (reported.telegram_user_id !== AI_TELEGRAM_USER_ID) {
+    await safeSend(reported.telegram_chat_id, T.partnerLeft);
+    await safeSend(reported.telegram_chat_id, T.reportSummaryReported(reported.trust_score, banned, banUntil));
+  }
 }
 
 // ============= Rate limit wrapper =============
@@ -1615,7 +1653,101 @@ async function handleAiStatus(supabase: ReturnType<typeof getSupabase>, profile:
   }
 }
 
+// ============= Callback query (inline button taps) =============
+async function handleCallbackQuery(
+  supabase: ReturnType<typeof getSupabase>,
+  cq: TgCallbackQuery,
+) {
+  const data = cq.data ?? "";
+  const chatId = cq.message?.chat.id;
+  const messageId = cq.message?.message_id;
+  if (!chatId) {
+    await answerCallbackQuery(cq.id);
+    return;
+  }
+
+  // Build a synthetic msg for ensureProfile
+  const synthetic: TgMessage = {
+    message_id: messageId ?? 0,
+    from: cq.from,
+    chat: { id: chatId, type: "private" },
+    date: Math.floor(Date.now() / 1000),
+  };
+  const profile = await ensureProfile(supabase, synthetic);
+  const step = await loadStep(supabase, chatId, profile);
+
+  const [ns, action] = data.split(":");
+
+  // Gender selection (onboarding)
+  if (ns === "gender" && step.name === "set_gender") {
+    const map: Record<string, "male" | "female" | "other"> = { male: "male", female: "female", other: "other" };
+    const g = map[action];
+    if (!g) {
+      await answerCallbackQuery(cq.id, "Pilihan tidak valid");
+      return;
+    }
+    await supabase.from("profiles").update({ gender: g }).eq("id", profile.id);
+    await persistStep(supabase, chatId, { name: "set_province" });
+    if (messageId) await editMessageReplyMarkup(chatId, messageId, null);
+    await answerCallbackQuery(cq.id, `Gender: ${g === "male" ? "Pria" : g === "female" ? "Wanita" : "Lainnya"}`);
+    await sendMessage(chatId, T.promptProvince);
+    return;
+  }
+
+  // Report reason selection
+  if (ns === "report" && step.name === "await_report_reason") {
+    if (action === "cancel") {
+      await persistStep(supabase, chatId, { name: "idle" });
+      if (messageId) await editMessageReplyMarkup(chatId, messageId, null);
+      await answerCallbackQuery(cq.id, "Dibatalkan");
+      await sendMessage(chatId, "❎ Laporan dibatalkan.");
+      return;
+    }
+    const valid = ["spam", "nsfw", "bot", "scam", "harassment", "other"] as const;
+    if (!valid.includes(action as typeof valid[number])) {
+      await answerCallbackQuery(cq.id, "Pilihan tidak valid");
+      return;
+    }
+    if (messageId) await editMessageReplyMarkup(chatId, messageId, null);
+    await answerCallbackQuery(cq.id, "Laporan diproses…");
+    await submitReport(supabase, profile, { conversationId: step.conversationId, reportedId: step.reportedId }, action as typeof valid[number]);
+    return;
+  }
+
+  // Unban severity selection
+  if (ns === "unban") {
+    if (messageId) await editMessageReplyMarkup(chatId, messageId, null);
+    await answerCallbackQuery(cq.id);
+    await handleUnban(supabase, profile, action);
+    return;
+  }
+
+  // Quick command shortcuts (used by /start menu)
+  if (ns === "cmd") {
+    if (messageId) await editMessageReplyMarkup(chatId, messageId, null);
+    await answerCallbackQuery(cq.id);
+    switch (action) {
+      case "cari": return handleCari(supabase, profile, "any");
+      case "stop": return handleStop(supabase, profile);
+      case "profile": return handleProfileStart(supabase, profile);
+      case "me": return handleMe(supabase, profile);
+      case "premium": return handlePremium(profile);
+      case "upgrade": return handleUpgrade(supabase, profile);
+      case "unban": return handleUnban(supabase, profile, null);
+      case "help": return handleHelp(profile);
+    }
+    return;
+  }
+
+  await answerCallbackQuery(cq.id);
+}
+
 export async function processUpdate(supabase: ReturnType<typeof getSupabase>, update: TgUpdate) {
+  // Handle callback_query (inline button taps) — no popup keyboard.
+  if (update.callback_query) {
+    await handleCallbackQuery(supabase, update.callback_query);
+    return;
+  }
   const msg = update.message;
   if (!msg || !msg.from) return;
   // Accept text OR photo (foto bukti transfer)
