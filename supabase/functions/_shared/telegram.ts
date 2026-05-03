@@ -79,6 +79,62 @@ export async function removeKeyboard(chatId: number, text: string) {
   return sendMessage(chatId, text, { reply_markup: { remove_keyboard: true } });
 }
 
+// Inline keyboard (tombol di dalam pesan, bukan popup di bawah).
+// `keyboard` = matrix of {text, callback_data} pairs.
+export type InlineButton = { text: string; callback_data: string };
+export async function sendInlineKeyboard(
+  chatId: number,
+  text: string,
+  keyboard: InlineButton[][],
+  opts: Record<string, unknown> = {},
+) {
+  return sendMessage(chatId, text, {
+    reply_markup: { inline_keyboard: keyboard },
+    ...opts,
+  });
+}
+
+// Acknowledge a callback query (hilangkan loading spinner di tombol).
+export async function answerCallbackQuery(
+  callbackQueryId: string,
+  text = "",
+  showAlert = false,
+) {
+  try {
+    return await tgFetch("/answerCallbackQuery", {
+      callback_query_id: callbackQueryId,
+      ...(text ? { text } : {}),
+      show_alert: showAlert,
+    });
+  } catch (err) {
+    console.error(`answerCallbackQuery failed: ${err instanceof Error ? err.message : err}`);
+    return null;
+  }
+}
+
+// Edit message reply markup (mis. hilangkan tombol setelah dipencet).
+export async function editMessageReplyMarkup(
+  chatId: number,
+  messageId: number,
+  keyboard: InlineButton[][] | null = null,
+) {
+  try {
+    return await tgFetch("/editMessageReplyMarkup", {
+      chat_id: chatId,
+      message_id: messageId,
+      reply_markup: keyboard ? { inline_keyboard: keyboard } : { inline_keyboard: [] },
+    });
+  } catch (err) {
+    console.error(`editMessageReplyMarkup failed: ${err instanceof Error ? err.message : err}`);
+    return null;
+  }
+}
+
+// Set bot's command list — populates the "Menu" button (next to message input).
+export async function setBotCommands(commands: { command: string; description: string }[]) {
+  return tgFetch("/setMyCommands", { commands });
+}
+
 // Tahan-error: kirim pesan tanpa pernah melempar (mis. user blokir bot, chat_id invalid).
 // Mengembalikan true jika sukses, false jika gagal — dipakai saat notifikasi ke kedua pihak
 // agar kegagalan ke salah satu user tidak mempengaruhi pengiriman ke user lain.
