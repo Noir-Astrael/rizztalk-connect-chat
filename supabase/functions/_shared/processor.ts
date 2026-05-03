@@ -1028,6 +1028,7 @@ async function handleCari(
   supabase: ReturnType<typeof getSupabase>,
   profile: Profile,
   trustFilter: TrustFilter = "any",
+  overrides: { province_code?: string | null; gender_pref?: "male" | "female" | "any" } = {},
 ) {
   if (profile.is_banned_until && new Date(profile.is_banned_until) > new Date()) {
     await sendMessage(profile.telegram_chat_id, T.bannedUntil(new Date(profile.is_banned_until).toLocaleString("id-ID")));
@@ -1042,11 +1043,25 @@ async function handleCari(
     await sendMessage(profile.telegram_chat_id, T.alreadyChatting);
     return;
   }
-  await sendMessage(profile.telegram_chat_id, T.searching(true, profile.province_name, trustFilter, profile.no_ai));
+  // Apply temporary overrides for this search (province / gender)
+  const effective: Profile = { ...profile };
+  if (overrides.province_code !== undefined) {
+    const prov = PROVINCES_ID.find((p) => p.code === overrides.province_code);
+    effective.province_code = prov?.code ?? profile.province_code;
+    effective.province_name = prov?.name ?? profile.province_name;
+  }
+  if (overrides.gender_pref) {
+    if (!profile.is_premium && overrides.gender_pref !== "any") {
+      await sendMessage(profile.telegram_chat_id, T.premiumOnlyGenderFilter);
+    } else {
+      effective.gender_preference = overrides.gender_pref;
+    }
+  }
+  await sendMessage(profile.telegram_chat_id, T.searching(true, effective.province_name, trustFilter, effective.no_ai));
 
-  const result = await tryMatch(supabase, profile, trustFilter);
+  const result = await tryMatch(supabase, effective, trustFilter);
   if (!result) {
-    await sendMessage(profile.telegram_chat_id, profile.no_ai ? T.inQueueNoAi : T.inQueue);
+    await sendMessage(profile.telegram_chat_id, effective.no_ai ? T.inQueueNoAi : T.inQueue);
     return;
   }
 
