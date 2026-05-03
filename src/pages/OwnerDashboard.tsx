@@ -170,6 +170,45 @@ export default function OwnerDashboard() {
     refresh();
   }
 
+  async function viewProof(p: PaymentRow) {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) { toast.error("Sesi habis. Login ulang."); return; }
+    const url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/get-payment-proof`;
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
+        body: JSON.stringify({ reference_code: p.reference_code }),
+      });
+      const j = await res.json();
+      if (!res.ok || !j.signed_url) {
+        toast.error(j.error === "no_image" ? "Belum ada foto bukti." : (j.error ?? "Gagal mengambil bukti."));
+        return;
+      }
+      window.open(j.signed_url, "_blank", "noopener,noreferrer");
+    } catch (e) {
+      toast.error("Gagal mengambil bukti.");
+    }
+  }
+
+  async function revokePremium(p: PaymentRow) {
+    if (!p.profiles) return;
+    const reason = prompt(`Cabut premium dari ${p.profiles.alias}? Alasan:`, "Bukti transfer palsu");
+    if (reason === null) return;
+    // Look up profile_id via reference_code
+    const { data: pr } = await supabase
+      .from("payment_requests")
+      .select("profile_id")
+      .eq("reference_code", p.reference_code)
+      .maybeSingle();
+    if (!pr?.profile_id) { toast.error("Profile tidak ditemukan."); return; }
+    const { data, error } = await supabase.rpc("revoke_premium", { _profile_id: pr.profile_id, _reason: reason });
+    if (error) { toast.error(error.message); return; }
+    if (!(data as { ok?: boolean })?.ok) { toast.error((data as { error?: string })?.error ?? "Gagal."); return; }
+    toast.success(`Premium ${p.profiles.alias} dicabut.`);
+    refresh();
+  }
+
   if (auth.status === "loading") {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background">
