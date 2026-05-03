@@ -1483,64 +1483,67 @@ async function handleStepInput(
       ]);
       return true;
     }
-
-    const { data: existing } = await supabase
-      .from("user_reports")
-      .select("id")
-      .eq("reporter_id", profile.id)
-      .eq("reported_id", step.reportedId)
-      .eq("conversation_id", step.conversationId)
-      .maybeSingle();
-
-    if (existing) {
-      await persistStep(supabase, profile.telegram_chat_id, { name: "idle" });
-      await removeKeyboard(profile.telegram_chat_id, T.reportAlready);
-      return true;
-    }
-
-    await supabase.from("user_reports").insert({
-      reporter_id: profile.id,
-      reported_id: step.reportedId,
-      conversation_id: step.conversationId,
-      reason,
-    });
-
-    // Re-fetch reported AFTER trigger handle_new_report ran (it already deducts -5 and may auto-ban).
-    // We log the trust_event via record_trust_event with delta=0 so the audit trail captures the verified report
-    // (the actual −5 was applied by the trigger to keep score capped & atomic).
-    const reported = await getProfileById(supabase, step.reportedId);
-    const banned = !!reported.is_banned_until && new Date(reported.is_banned_until) > new Date();
-    const banUntil = banned ? new Date(reported.is_banned_until!).toLocaleString("id-ID") : null;
-    const reasonText = `Report terverifikasi (${reason})${banned ? " · auto-ban 24 jam tercapai" : ""}`;
-
-    // Audit trail event: delta 0 (already applied by trigger) — keeps history consistent without double-counting.
-    await supabase.from("trust_events").insert({
-      profile_id: reported.id,
-      conversation_id: step.conversationId,
-      event_type: banned ? "ban" : "reported",
-      delta: -5,
-      new_score: reported.trust_score, // post-trigger score
-      reason: reasonText,
-    });
-
-    const conv = await getActiveConversation(supabase, profile.id);
-    if (conv && conv.id === step.conversationId) {
-      await endConversation(supabase, conv, profile.id);
-    }
-
-    await persistStep(supabase, profile.telegram_chat_id, { name: "idle" });
-
-    try { await removeKeyboard(profile.telegram_chat_id, T.reportSuccess); }
-    catch (e) { console.error("removeKeyboard failed", e); await safeSend(profile.telegram_chat_id, T.reportSuccess); }
-    await safeSend(profile.telegram_chat_id, T.reportSummaryReporter(profile.trust_score));
-    if (reported.telegram_user_id !== AI_TELEGRAM_USER_ID) {
-      await safeSend(reported.telegram_chat_id, T.partnerLeft);
-      await safeSend(reported.telegram_chat_id, T.reportSummaryReported(reported.trust_score, banned, banUntil));
-    }
+    await submitReport(supabase, profile, step, reason);
     return true;
   }
 
   return false;
+}
+
+// Shared report submission logic (dipakai oleh teks & callback_query).
+async function submitReport(
+  supabase: ReturnType<typeof getSupabase>,
+  profile: Profile,
+  step: { conversationId: string; reportedId: string },
+  reason: "spam" | "nsfw" | "bot" | "scam" | "harassment" | "other",
+) {
+  const { data: existing } = await supabase
+    .from("user_reports")
+    .select("id")
+    .eq("reporter_id", profile.id)
+    .eq("reported_id", step.reportedId)
+    .eq("conversation_id", step.conversationId)
+    .maybeSingle();
+
+  if (existing) {
+    await persistStep(supabase, profile.telegram_chat_id, { name: "idle" });
+    await safeSend(profile.telegram_chat_id, T.reportAlready);
+    return;
+  }
+
+  await supabase.from("user_reports").insert({
+    reporter_id: profile.id,
+    reported_id: step.reportedId,
+    conversation_id: step.conversationId,
+    reason,
+  });
+
+  const reported = await getProfileById(supabase, step.reportedId);
+  const banned = !!reported.is_banned_until && new Date(reported.is_banned_until) > new Date();
+  const banUntil = banned ? new Date(reported.is_banned_until!).toLocaleString("id-ID") : null;
+  const reasonText = `Report terverifikasi (${reason})${banned ? " · auto-ban 24 jam tercapai" : ""}`;
+
+  await supabase.from("trust_events").insert({
+    profile_id: reported.id,
+    conversation_id: step.conversationId,
+    event_type: banned ? "ban" : "reported",
+    delta: -5,
+    new_score: reported.trust_score,
+    reason: reasonText,
+  });
+
+  const conv = await getActiveConversation(supabase, profile.id);
+  if (conv && conv.id === step.conversationId) {
+    await endConversation(supabase, conv, profile.id);
+  }
+
+  await persistStep(supabase, profile.telegram_chat_id, { name: "idle" });
+  await safeSend(profile.telegram_chat_id, T.reportSuccess);
+  await safeSend(profile.telegram_chat_id, T.reportSummaryReporter(profile.trust_score));
+  if (reported.telegram_user_id !== AI_TELEGRAM_USER_ID) {
+    await safeSend(reported.telegram_chat_id, T.partnerLeft);
+    await safeSend(reported.telegram_chat_id, T.reportSummaryReported(reported.trust_score, banned, banUntil));
+  }
 }
 
 // ============= Rate limit wrapper =============
