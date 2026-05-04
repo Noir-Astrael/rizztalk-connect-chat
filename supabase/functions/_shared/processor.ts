@@ -1918,6 +1918,7 @@ async function handleCallbackQuery(
       case "block": return handleBlock(supabase, profile);
       case "ai": return handleAiStatus(supabase, profile);
       case "help": return handleHelp(profile);
+      case "contact": return handleContact(profile);
     }
     return;
   }
