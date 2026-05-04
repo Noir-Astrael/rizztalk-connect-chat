@@ -1956,7 +1956,7 @@ export async function processUpdate(supabase: ReturnType<typeof getSupabase>, up
   if (profile.is_banned_until && new Date(profile.is_banned_until) > new Date()) {
     // Tetap izinkan /unban + /batal walau di-ban
     const banText = (msg.text ?? "").trim().toLowerCase();
-    if (!banText.startsWith("/unban") && !banText.startsWith("/batal") && !banText.startsWith("/cancel") && !banText.startsWith("/start") && !banText.startsWith("/help")) {
+    if (!banText.startsWith("/unban") && !banText.startsWith("/batal") && !banText.startsWith("/cancel") && !banText.startsWith("/start") && !banText.startsWith("/help") && !banText.startsWith("/contact") && !banText.startsWith("/hubungi") && !banText.startsWith("/admin_contact")) {
       await sendMessage(profile.telegram_chat_id, T.bannedUntil(new Date(profile.is_banned_until).toLocaleString("id-ID")));
       return;
     }
