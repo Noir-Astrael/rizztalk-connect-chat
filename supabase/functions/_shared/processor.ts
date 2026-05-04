@@ -211,6 +211,7 @@ const T = {
     `/batal — batalkan upload bukti transfer (jika salah kirim)\n` +
     `/nonai — tolak AI Companion, hanya match manusia\n` +
     `/ai — status AI Companion & riwayat 5 pesan AI\n` +
+    `/contact — hubungi admin (@${ADMIN_CONTACT_USERNAME})\n` +
     `/help — bantuan\n\n` +
     `<i>💡 Jika tidak ada user nyata dalam 60 detik, AI Companion akan menyapa kamu (transparan, akan diberi tahu).</i>`,
   needOnboarding: `⚠️ Profil kamu belum lengkap. Ketik /profile dulu.`,
