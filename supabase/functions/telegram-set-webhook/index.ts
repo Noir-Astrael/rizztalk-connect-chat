@@ -69,6 +69,7 @@ Deno.serve(async (req) => {
     { command: "block", description: "Blokir lawan chat" },
     { command: "nonai", description: "Tolak AI Companion (hanya manusia)" },
     { command: "ai", description: "Status AI Companion" },
+    { command: "contact", description: "Hubungi admin (@Rizz_admins)" },
     { command: "help", description: "Bantuan & daftar perintah" },
   ];
 
