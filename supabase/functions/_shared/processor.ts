@@ -110,6 +110,11 @@ const QRIS_IMAGE_URL = Deno.env.get("QRIS_IMAGE_URL") ??
 const PAYMENT_MERCHANT = Deno.env.get("PAYMENT_MERCHANT") ?? "Secret Shop";
 const PAYMENT_NMID = Deno.env.get("PAYMENT_NMID") ?? "ID1026507854309";
 
+// ============= ADMIN CONTACT =============
+// Ditampilkan di /contact, /help, dan tombol "Hubungi Admin" di main menu.
+const ADMIN_CONTACT_USERNAME = Deno.env.get("ADMIN_CONTACT_USERNAME") ?? "Rizz_admins";
+const ADMIN_CONTACT_URL = `https://t.me/${ADMIN_CONTACT_USERNAME}`;
+
 // ============= HTML ESCAPE (untuk forward pesan antar user) =============
 // Escapes user-generated text sebelum dikirim via Telegram HTML mode.
 // Mencegah HTML injection dari pesan pengguna yang di-forward.
