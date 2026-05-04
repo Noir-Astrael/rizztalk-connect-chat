@@ -155,6 +155,9 @@ function mainMenuButtons(profile: Profile): InlineButton[][] {
       { text: "🤖 AI Status", callback_data: "cmd:ai" },
       { text: "❓ Bantuan", callback_data: "cmd:help" },
     ],
+    [
+      { text: `📞 Hubungi Admin (@${ADMIN_CONTACT_USERNAME})`, url: ADMIN_CONTACT_URL },
+    ],
   ];
 }
 
