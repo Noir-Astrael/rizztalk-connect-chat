@@ -167,15 +167,18 @@ async function sendMainMenu(profile: Profile, headerText?: string) {
   await sendInlineKeyboard(profile.telegram_chat_id, text, mainMenuButtons(profile));
 }
 
-// Build paginated province picker (38 provinces in Indonesia, 2 cols × ~10 rows).
-function provinceButtons(): InlineButton[][] {
+// Build paginated province picker. `cbPrefix` controls the callback namespace,
+// e.g. "searchprov" for normal province search, or "searchgp:<gender>" for premium
+// combined gender + province search.
+function provinceButtons(cbPrefix = "searchprov", extraTopRow?: InlineButton[]): InlineButton[][] {
   const rows: InlineButton[][] = [];
+  if (extraTopRow && extraTopRow.length > 0) rows.push(extraTopRow);
   for (let i = 0; i < PROVINCES_ID.length; i += 2) {
     const row: InlineButton[] = [
-      { text: PROVINCES_ID[i].name, callback_data: `searchprov:${PROVINCES_ID[i].code}` },
+      { text: PROVINCES_ID[i].name, callback_data: `${cbPrefix}:${PROVINCES_ID[i].code}` },
     ];
     if (PROVINCES_ID[i + 1]) {
-      row.push({ text: PROVINCES_ID[i + 1].name, callback_data: `searchprov:${PROVINCES_ID[i + 1].code}` });
+      row.push({ text: PROVINCES_ID[i + 1].name, callback_data: `${cbPrefix}:${PROVINCES_ID[i + 1].code}` });
     }
     rows.push(row);
   }
