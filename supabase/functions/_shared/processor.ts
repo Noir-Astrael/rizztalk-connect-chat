@@ -747,7 +747,18 @@ async function handleHelp(profile: Profile) {
   await sendMainMenu(profile, "Pilih aksi cepat:");
 }
 
-async function handleUnban(
+async function handleContact(profile: Profile) {
+  await sendInlineKeyboard(
+    profile.telegram_chat_id,
+    `📞 <b>Hubungi Admin</b>\n\n` +
+    `Untuk bantuan, klaim premium yang bermasalah, banding ban, atau pertanyaan lain — hubungi admin resmi:\n\n` +
+    `👤 <b>@${ADMIN_CONTACT_USERNAME}</b>\n\n` +
+    `<i>⚠️ Hanya admin di username ini yang resmi. Hati-hati penipu yang mengaku admin di chat acak.</i>`,
+    [[{ text: `💬 Chat @${ADMIN_CONTACT_USERNAME}`, url: ADMIN_CONTACT_URL }]],
+  );
+}
+
+
   supabase: ReturnType<typeof getSupabase>,
   profile: Profile,
   arg: string | null,
