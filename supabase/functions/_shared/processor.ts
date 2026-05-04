@@ -1862,9 +1862,38 @@ async function handleCallbackQuery(
       await answerCallbackQuery(cq.id);
       return;
     }
+    // Premium: setelah pilih gender, lanjut pilih provinsi (atau "Semua provinsi")
     if (messageId) await editMessageReplyMarkup(chatId, messageId, null);
     await answerCallbackQuery(cq.id);
-    return handleCari(supabase, profile, "any", { gender_pref: action });
+    const genderLabel = action === "male" ? "Pria" : "Wanita";
+    await sendInlineKeyboard(
+      chatId,
+      `📍 <b>Filter ${genderLabel} + Provinsi</b>\n\nPilih provinsi lawan ngobrol — atau pilih "Semua Provinsi" untuk tidak membatasi lokasi:`,
+      provinceButtons(`searchgp:${action}`, [
+        { text: "🌏 Semua Provinsi", callback_data: `searchgp:${action}:any` },
+      ]),
+    );
+    return;
+  }
+
+  // Combined gender + province (premium). callback: searchgp:<gender>:<province_code|any>
+  if (ns === "searchgp") {
+    if (!profile.is_premium) {
+      await answerCallbackQuery(cq.id, "Fitur Premium", true);
+      return;
+    }
+    // data = "searchgp:male:32" → split by ":" → ["searchgp","male","32"]
+    const [, gen, prov] = data.split(":");
+    if (gen !== "male" && gen !== "female") {
+      await answerCallbackQuery(cq.id);
+      return;
+    }
+    if (messageId) await editMessageReplyMarkup(chatId, messageId, null);
+    await answerCallbackQuery(cq.id);
+    return handleCari(supabase, profile, "any", {
+      gender_pref: gen,
+      province_code: prov === "any" ? null : prov,
+    });
   }
 
   // Quick command shortcuts (used by /start menu)
