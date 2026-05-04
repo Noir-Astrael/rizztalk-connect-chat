@@ -110,6 +110,11 @@ const QRIS_IMAGE_URL = Deno.env.get("QRIS_IMAGE_URL") ??
 const PAYMENT_MERCHANT = Deno.env.get("PAYMENT_MERCHANT") ?? "Secret Shop";
 const PAYMENT_NMID = Deno.env.get("PAYMENT_NMID") ?? "ID1026507854309";
 
+// ============= ADMIN CONTACT =============
+// Ditampilkan di /contact, /help, dan tombol "Hubungi Admin" di main menu.
+const ADMIN_CONTACT_USERNAME = Deno.env.get("ADMIN_CONTACT_USERNAME") ?? "Rizz_admins";
+const ADMIN_CONTACT_URL = `https://t.me/${ADMIN_CONTACT_USERNAME}`;
+
 // ============= HTML ESCAPE (untuk forward pesan antar user) =============
 // Escapes user-generated text sebelum dikirim via Telegram HTML mode.
 // Mencegah HTML injection dari pesan pengguna yang di-forward.
@@ -150,6 +155,9 @@ function mainMenuButtons(profile: Profile): InlineButton[][] {
       { text: "🤖 AI Status", callback_data: "cmd:ai" },
       { text: "❓ Bantuan", callback_data: "cmd:help" },
     ],
+    [
+      { text: `📞 Hubungi Admin (@${ADMIN_CONTACT_USERNAME})`, url: ADMIN_CONTACT_URL },
+    ],
   ];
 }
 
@@ -159,15 +167,18 @@ async function sendMainMenu(profile: Profile, headerText?: string) {
   await sendInlineKeyboard(profile.telegram_chat_id, text, mainMenuButtons(profile));
 }
 
-// Build paginated province picker (38 provinces in Indonesia, 2 cols × ~10 rows).
-function provinceButtons(): InlineButton[][] {
+// Build paginated province picker. `cbPrefix` controls the callback namespace,
+// e.g. "searchprov" for normal province search, or "searchgp:<gender>" for premium
+// combined gender + province search.
+function provinceButtons(cbPrefix = "searchprov", extraTopRow?: InlineButton[]): InlineButton[][] {
   const rows: InlineButton[][] = [];
+  if (extraTopRow && extraTopRow.length > 0) rows.push(extraTopRow);
   for (let i = 0; i < PROVINCES_ID.length; i += 2) {
     const row: InlineButton[] = [
-      { text: PROVINCES_ID[i].name, callback_data: `searchprov:${PROVINCES_ID[i].code}` },
+      { text: PROVINCES_ID[i].name, callback_data: `${cbPrefix}:${PROVINCES_ID[i].code}` },
     ];
     if (PROVINCES_ID[i + 1]) {
-      row.push({ text: PROVINCES_ID[i + 1].name, callback_data: `searchprov:${PROVINCES_ID[i + 1].code}` });
+      row.push({ text: PROVINCES_ID[i + 1].name, callback_data: `${cbPrefix}:${PROVINCES_ID[i + 1].code}` });
     }
     rows.push(row);
   }
@@ -200,6 +211,7 @@ const T = {
     `/batal — batalkan upload bukti transfer (jika salah kirim)\n` +
     `/nonai — tolak AI Companion, hanya match manusia\n` +
     `/ai — status AI Companion & riwayat 5 pesan AI\n` +
+    `/contact — hubungi admin (@${ADMIN_CONTACT_USERNAME})\n` +
     `/help — bantuan\n\n` +
     `<i>💡 Jika tidak ada user nyata dalam 60 detik, AI Companion akan menyapa kamu (transparan, akan diberi tahu).</i>`,
   needOnboarding: `⚠️ Profil kamu belum lengkap. Ketik /profile dulu.`,
@@ -735,6 +747,18 @@ async function handleHelp(profile: Profile) {
   await sendMainMenu(profile, "Pilih aksi cepat:");
 }
 
+async function handleContact(profile: Profile) {
+  await sendInlineKeyboard(
+    profile.telegram_chat_id,
+    `📞 <b>Hubungi Admin</b>\n\n` +
+    `Untuk bantuan, klaim premium yang bermasalah, banding ban, atau pertanyaan lain — hubungi admin resmi:\n\n` +
+    `👤 <b>@${ADMIN_CONTACT_USERNAME}</b>\n\n` +
+    `<i>⚠️ Hanya admin di username ini yang resmi. Hati-hati penipu yang mengaku admin di chat acak.</i>`,
+    [[{ text: `💬 Chat @${ADMIN_CONTACT_USERNAME}`, url: ADMIN_CONTACT_URL }]],
+  );
+}
+
+
 async function handleUnban(
   supabase: ReturnType<typeof getSupabase>,
   profile: Profile,
@@ -1062,9 +1086,15 @@ async function handleCari(
   // Apply temporary overrides for this search (province / gender)
   const effective: Profile = { ...profile };
   if (overrides.province_code !== undefined) {
-    const prov = PROVINCES_ID.find((p) => p.code === overrides.province_code);
-    effective.province_code = prov?.code ?? profile.province_code;
-    effective.province_name = prov?.name ?? profile.province_name;
+    if (overrides.province_code === null) {
+      // Premium: "Semua Provinsi" — jangan filter provinsi
+      effective.province_code = null;
+      effective.province_name = "Semua Provinsi";
+    } else {
+      const prov = PROVINCES_ID.find((p) => p.code === overrides.province_code);
+      effective.province_code = prov?.code ?? profile.province_code;
+      effective.province_name = prov?.name ?? profile.province_name;
+    }
   }
   if (overrides.gender_pref) {
     if (!profile.is_premium && overrides.gender_pref !== "any") {
@@ -1839,9 +1869,38 @@ async function handleCallbackQuery(
       await answerCallbackQuery(cq.id);
       return;
     }
+    // Premium: setelah pilih gender, lanjut pilih provinsi (atau "Semua provinsi")
     if (messageId) await editMessageReplyMarkup(chatId, messageId, null);
     await answerCallbackQuery(cq.id);
-    return handleCari(supabase, profile, "any", { gender_pref: action });
+    const genderLabel = action === "male" ? "Pria" : "Wanita";
+    await sendInlineKeyboard(
+      chatId,
+      `📍 <b>Filter ${genderLabel} + Provinsi</b>\n\nPilih provinsi lawan ngobrol — atau pilih "Semua Provinsi" untuk tidak membatasi lokasi:`,
+      provinceButtons(`searchgp:${action}`, [
+        { text: "🌏 Semua Provinsi", callback_data: `searchgp:${action}:any` },
+      ]),
+    );
+    return;
+  }
+
+  // Combined gender + province (premium). callback: searchgp:<gender>:<province_code|any>
+  if (ns === "searchgp") {
+    if (!profile.is_premium) {
+      await answerCallbackQuery(cq.id, "Fitur Premium", true);
+      return;
+    }
+    // data = "searchgp:male:32" → split by ":" → ["searchgp","male","32"]
+    const [, gen, prov] = data.split(":");
+    if (gen !== "male" && gen !== "female") {
+      await answerCallbackQuery(cq.id);
+      return;
+    }
+    if (messageId) await editMessageReplyMarkup(chatId, messageId, null);
+    await answerCallbackQuery(cq.id);
+    return handleCari(supabase, profile, "any", {
+      gender_pref: gen,
+      province_code: prov === "any" ? null : prov,
+    });
   }
 
   // Quick command shortcuts (used by /start menu)
@@ -1860,6 +1919,7 @@ async function handleCallbackQuery(
       case "block": return handleBlock(supabase, profile);
       case "ai": return handleAiStatus(supabase, profile);
       case "help": return handleHelp(profile);
+      case "contact": return handleContact(profile);
     }
     return;
   }
@@ -1897,7 +1957,7 @@ export async function processUpdate(supabase: ReturnType<typeof getSupabase>, up
   if (profile.is_banned_until && new Date(profile.is_banned_until) > new Date()) {
     // Tetap izinkan /unban + /batal walau di-ban
     const banText = (msg.text ?? "").trim().toLowerCase();
-    if (!banText.startsWith("/unban") && !banText.startsWith("/batal") && !banText.startsWith("/cancel") && !banText.startsWith("/start") && !banText.startsWith("/help")) {
+    if (!banText.startsWith("/unban") && !banText.startsWith("/batal") && !banText.startsWith("/cancel") && !banText.startsWith("/start") && !banText.startsWith("/help") && !banText.startsWith("/contact") && !banText.startsWith("/hubungi") && !banText.startsWith("/admin_contact")) {
       await sendMessage(profile.telegram_chat_id, T.bannedUntil(new Date(profile.is_banned_until).toLocaleString("id-ID")));
       return;
     }
@@ -1968,6 +2028,9 @@ export async function processUpdate(supabase: ReturnType<typeof getSupabase>, up
       case "/admin": return handleAdmin(supabase, profile, parts.slice(1));
       case "/nonai": return handleNoAi(supabase, profile);
       case "/ai": return handleAiStatus(supabase, profile);
+      case "/contact":
+      case "/admin_contact":
+      case "/hubungi": return handleContact(profile);
       default:
         await sendMessage(profile.telegram_chat_id, `Perintah tidak dikenal. Ketik /help.`);
         return;

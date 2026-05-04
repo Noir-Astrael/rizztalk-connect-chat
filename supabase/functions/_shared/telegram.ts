@@ -80,8 +80,10 @@ export async function removeKeyboard(chatId: number, text: string) {
 }
 
 // Inline keyboard (tombol di dalam pesan, bukan popup di bawah).
-// `keyboard` = matrix of {text, callback_data} pairs.
-export type InlineButton = { text: string; callback_data: string };
+// `keyboard` = matrix of buttons. Sebuah tombol harus pakai `callback_data` ATAU `url`.
+export type InlineButton =
+  | { text: string; callback_data: string }
+  | { text: string; url: string };
 export async function sendInlineKeyboard(
   chatId: number,
   text: string,
