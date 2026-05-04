@@ -759,6 +759,7 @@ async function handleContact(profile: Profile) {
 }
 
 
+async function handleUnban(
   supabase: ReturnType<typeof getSupabase>,
   profile: Profile,
   arg: string | null,
