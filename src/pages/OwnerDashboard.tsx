@@ -181,13 +181,33 @@ export default function OwnerDashboard() {
         body: JSON.stringify({ reference_code: p.reference_code }),
       });
       const j = await res.json();
-      if (!res.ok || !j.signed_url) {
-        toast.error(j.error === "no_image" ? "Belum ada foto bukti." : (j.error ?? "Gagal mengambil bukti."));
+      if (res.ok && j.signed_url) {
+        window.open(j.signed_url, "_blank", "noopener,noreferrer");
         return;
       }
-      window.open(j.signed_url, "_blank", "noopener,noreferrer");
+      // Friendly error mapping
+      if (j.error === "no_image") {
+        if (j.telegram_file_id) {
+          toast.error(
+            `Bukti hanya tersedia di Telegram (file_id: ${String(j.telegram_file_id).slice(0, 20)}…). User mengirim foto sebelum sistem storage aktif — minta user upload ulang via /upgrade atau /unban.`,
+            { duration: 8000 },
+          );
+        } else {
+          toast.error("Belum ada foto bukti — user belum mengupload bukti transfer untuk kode ini.");
+        }
+        return;
+      }
+      if (res.status === 404) {
+        toast.error("Referensi pembayaran tidak ditemukan.");
+        return;
+      }
+      if (res.status === 403) {
+        toast.error("Akses ditolak. Hanya admin/owner.");
+        return;
+      }
+      toast.error(`Gagal mengambil bukti: ${j.error ?? res.statusText ?? "unknown"}`);
     } catch (e) {
-      toast.error("Gagal mengambil bukti.");
+      toast.error("Gagal mengambil bukti (jaringan/server).");
     }
   }
 
