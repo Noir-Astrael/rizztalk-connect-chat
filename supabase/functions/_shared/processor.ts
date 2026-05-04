@@ -1085,9 +1085,15 @@ async function handleCari(
   // Apply temporary overrides for this search (province / gender)
   const effective: Profile = { ...profile };
   if (overrides.province_code !== undefined) {
-    const prov = PROVINCES_ID.find((p) => p.code === overrides.province_code);
-    effective.province_code = prov?.code ?? profile.province_code;
-    effective.province_name = prov?.name ?? profile.province_name;
+    if (overrides.province_code === null) {
+      // Premium: "Semua Provinsi" — jangan filter provinsi
+      effective.province_code = null;
+      effective.province_name = "Semua Provinsi";
+    } else {
+      const prov = PROVINCES_ID.find((p) => p.code === overrides.province_code);
+      effective.province_code = prov?.code ?? profile.province_code;
+      effective.province_name = prov?.name ?? profile.province_name;
+    }
   }
   if (overrides.gender_pref) {
     if (!profile.is_premium && overrides.gender_pref !== "any") {
