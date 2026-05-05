@@ -44,6 +44,33 @@ export type Database = {
         }
         Relationships: []
       }
+      audit_log: {
+        Row: {
+          action: string
+          actor_profile_id: string | null
+          created_at: string
+          details: Json | null
+          id: string
+          target_profile_id: string | null
+        }
+        Insert: {
+          action: string
+          actor_profile_id?: string | null
+          created_at?: string
+          details?: Json | null
+          id?: string
+          target_profile_id?: string | null
+        }
+        Update: {
+          action?: string
+          actor_profile_id?: string | null
+          created_at?: string
+          details?: Json | null
+          id?: string
+          target_profile_id?: string | null
+        }
+        Relationships: []
+      }
       bot_signals: {
         Row: {
           conversation_id: string | null
@@ -765,6 +792,15 @@ export type Database = {
       }
       admin_dashboard_stats: { Args: never; Returns: Json }
       admin_password_meta: { Args: { _profile_id?: string }; Returns: Json }
+      admin_unban_user: {
+        Args: {
+          _actor_profile_id: string
+          _reason?: string
+          _telegram_user_id?: number
+          _telegram_username?: string
+        }
+        Returns: Json
+      }
       apply_trust_score_change: {
         Args: { _delta: number; _profile_id: string }
         Returns: number
@@ -805,6 +841,15 @@ export type Database = {
           _telegram_username: string
         }
         Returns: string
+      }
+      get_owner_notify_chats: {
+        Args: never
+        Returns: {
+          alias: string
+          profile_id: string
+          telegram_chat_id: number
+          telegram_username: string
+        }[]
       }
       get_payment_proof_url: {
         Args: { _reference_code: string }
@@ -915,6 +960,14 @@ export type Database = {
       reset_monthly_unban_credits: { Args: never; Returns: number }
       revoke_premium: {
         Args: { _profile_id: string; _reason?: string }
+        Returns: Json
+      }
+      revoke_premium_by_reference: {
+        Args: {
+          _actor_profile_id: string
+          _reason?: string
+          _reference_code: string
+        }
         Returns: Json
       }
     }

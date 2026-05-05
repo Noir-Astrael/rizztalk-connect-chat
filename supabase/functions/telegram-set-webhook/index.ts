@@ -70,6 +70,8 @@ Deno.serve(async (req) => {
     { command: "nonai", description: "Tolak AI Companion (hanya manusia)" },
     { command: "ai", description: "Status AI Companion" },
     { command: "contact", description: "Hubungi admin (@Rizz_admins)" },
+    { command: "cabut", description: "[Admin] Cabut premium berdasarkan kode bukti" },
+    { command: "unbanuser", description: "[Admin] Unban user (ID/username)" },
     { command: "help", description: "Bantuan & daftar perintah" },
   ];
 
