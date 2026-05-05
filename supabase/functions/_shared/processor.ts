@@ -970,6 +970,42 @@ async function handlePhotoProof(
     })
     .eq("reference_code", step.referenceCode);
 
+  // Forward bukti transfer ke semua owner (mis. @Rizz_Admins) dengan caption
+  // berisi kode unik. Owner bisa langsung jalankan /cabut <ref> jika bukti palsu.
+  try {
+    const { data: pr } = await supabase
+      .from("payment_requests")
+      .select("payment_kind, plan, amount_idr, target_severity")
+      .eq("reference_code", step.referenceCode)
+      .maybeSingle();
+    const { data: owners } = await supabase.rpc("get_owner_notify_chats");
+    const ownerList = (owners ?? []) as Array<{ telegram_chat_id: number; telegram_username: string | null }>;
+    const kindLabel = pr?.payment_kind === "unban"
+      ? `🚨 BUKTI UNBAN (${pr?.target_severity ?? "-"})`
+      : `💎 BUKTI PREMIUM (${pr?.plan ?? "-"})`;
+    const caption =
+      `${kindLabel}\n\n` +
+      `👤 User: <b>${escapeHtml(profile.alias)}</b>` +
+      `${profile.telegram_username ? ` (@${escapeHtml(profile.telegram_username)})` : ""}\n` +
+      `🆔 TG: <code>${profile.telegram_user_id}</code>\n` +
+      `💵 Nominal: <b>Rp${Number(pr?.amount_idr ?? 0).toLocaleString("id-ID")}</b>\n` +
+      `🔖 Kode unik: <code>${step.referenceCode}</code>\n\n` +
+      `Cabut premium / batalkan: <code>/cabut ${step.referenceCode}</code>\n` +
+      `Setujui manual: <code>/admin approve ${step.referenceCode}</code>\n` +
+      `Tolak: <code>/admin reject ${step.referenceCode}</code>`;
+    for (const ow of ownerList) {
+      // Skip kalau user kebetulan adalah owner sendiri (mencegah self-loop)
+      if (ow.telegram_chat_id === profile.telegram_chat_id) continue;
+      try {
+        await sendPhoto(ow.telegram_chat_id, best.file_id, caption);
+      } catch (e) {
+        console.error(`forward proof to owner ${ow.telegram_chat_id} failed`, e);
+      }
+    }
+  } catch (e) {
+    console.error("forward proof to owners failed", e);
+  }
+
   // Call AI Vision validator edge function
   const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
   const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
