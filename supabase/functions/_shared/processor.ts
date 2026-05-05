@@ -2181,6 +2181,10 @@ export async function processUpdate(supabase: ReturnType<typeof getSupabase>, up
       case "/batal":
       case "/cancel": return handleCancelProof(supabase, profile);
       case "/admin": return handleAdmin(supabase, profile, parts.slice(1));
+      case "/cabut":
+      case "/revoke": return handleCabut(supabase, profile, parts.slice(1));
+      case "/unbanuser":
+      case "/admin_unban": return handleUnbanUser(supabase, profile, parts.slice(1));
       case "/nonai": return handleNoAi(supabase, profile);
       case "/ai": return handleAiStatus(supabase, profile);
       case "/contact":
