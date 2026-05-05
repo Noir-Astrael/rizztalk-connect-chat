@@ -215,16 +215,26 @@ export default function OwnerDashboard() {
     if (!p.profiles) return;
     const reason = prompt(`Cabut premium dari ${p.profiles.alias}? Alasan:`, "Bukti transfer palsu");
     if (reason === null) return;
-    // Look up profile_id via reference_code
-    const { data: pr } = await supabase
-      .from("payment_requests")
-      .select("profile_id")
-      .eq("reference_code", p.reference_code)
+    // Find caller's profile_id (the logged-in owner) so RPC has actor context
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) { toast.error("Sesi habis. Login ulang."); return; }
+    const { data: callerProf, error: cpErr } = await supabase
+      .from("profiles")
+      .select("id")
+      .eq("auth_user_id", session.user.id)
       .maybeSingle();
-    if (!pr?.profile_id) { toast.error("Profile tidak ditemukan."); return; }
-    const { data, error } = await supabase.rpc("revoke_premium", { _profile_id: pr.profile_id, _reason: reason });
+    if (cpErr || !callerProf?.id) { toast.error("Profile owner tidak ditemukan."); return; }
+    const { data, error } = await supabase.rpc("revoke_premium_by_reference", {
+      _reference_code: p.reference_code,
+      _actor_profile_id: callerProf.id,
+      _reason: reason,
+    });
     if (error) { toast.error(error.message); return; }
-    if (!(data as { ok?: boolean })?.ok) { toast.error((data as { error?: string })?.error ?? "Gagal."); return; }
+    const result = data as { ok?: boolean; error?: string };
+    if (!result?.ok) {
+      toast.error(result?.error ?? "Gagal mencabut premium.");
+      return;
+    }
     toast.success(`Premium ${p.profiles.alias} dicabut.`);
     refresh();
   }
