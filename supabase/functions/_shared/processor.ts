@@ -1482,6 +1482,125 @@ async function handleAdmin(
   await sendMessage(profile.telegram_chat_id, "Subcommand tidak dikenal. /admin tanpa argumen untuk lihat daftar.");
 }
 
+// /cabut <RZT-XXXXXX|UNB-XXXXXX> [alasan]  — admin/owner cabut premium berdasarkan kode bukti.
+async function handleCabut(
+  supabase: ReturnType<typeof getSupabase>,
+  profile: Profile,
+  args: string[],
+) {
+  if (!(await isAdmin(supabase, profile.id))) {
+    await sendMessage(profile.telegram_chat_id, "🚫 Hanya admin/owner yang bisa mencabut premium.");
+    return;
+  }
+  const ref = (args[0] ?? "").trim().toUpperCase();
+  if (!ref) {
+    await sendMessage(
+      profile.telegram_chat_id,
+      "Usage: <code>/cabut RZT-XXXXXX</code> [alasan]\n\n" +
+      "Kode unik ada di caption foto bukti yang diteruskan ke kamu.",
+    );
+    return;
+  }
+  const reason = args.slice(1).join(" ") || "fake_proof";
+
+  const { data, error } = await supabase.rpc("revoke_premium_by_reference", {
+    _reference_code: ref,
+    _actor_profile_id: profile.id,
+    _reason: reason,
+  });
+  if (error) {
+    await sendMessage(profile.telegram_chat_id, `❌ Error: ${error.message}`);
+    return;
+  }
+  const result = data as { ok?: boolean; error?: string; profile_id?: string };
+  if (!result?.ok) {
+    const errMap: Record<string, string> = {
+      forbidden: "Akses ditolak.",
+      reference_not_found: `Kode <code>${escapeHtml(ref)}</code> tidak ditemukan.`,
+    };
+    await sendMessage(profile.telegram_chat_id, `❌ ${errMap[result?.error ?? ""] ?? result?.error ?? "Gagal."}`);
+    return;
+  }
+
+  if (result.profile_id) {
+    const { data: u } = await supabase
+      .from("profiles")
+      .select("telegram_chat_id, alias")
+      .eq("id", result.profile_id)
+      .maybeSingle();
+    if (u?.telegram_chat_id) {
+      await safeSend(
+        u.telegram_chat_id,
+        `⚠️ <b>Status premium kamu dicabut oleh admin.</b>\n\n` +
+        `Alasan: <i>${escapeHtml(reason)}</i>\n` +
+        `Kode pembayaran: <code>${escapeHtml(ref)}</code>\n\n` +
+        `Jika ini kekeliruan, hubungi admin via /contact.`,
+      );
+    }
+    await sendMessage(
+      profile.telegram_chat_id,
+      `✅ Premium dicabut.\nRef: <code>${escapeHtml(ref)}</code>\nAlasan: <i>${escapeHtml(reason)}</i>`,
+    );
+  }
+}
+
+// /unbanuser <telegram_id|@username> [alasan]  — admin/owner unban langsung.
+async function handleUnbanUser(
+  supabase: ReturnType<typeof getSupabase>,
+  profile: Profile,
+  args: string[],
+) {
+  if (!(await isAdmin(supabase, profile.id))) {
+    await sendMessage(profile.telegram_chat_id, "🚫 Hanya admin/owner yang bisa unban user.");
+    return;
+  }
+  const target = (args[0] ?? "").trim();
+  if (!target) {
+    await sendMessage(
+      profile.telegram_chat_id,
+      "Usage:\n" +
+      "<code>/unbanuser 123456789</code> (Telegram User ID)\n" +
+      "<code>/unbanuser @username</code>\n\n" +
+      "Pakai ini kalau AI salah ban user yang sebenarnya manusia.",
+    );
+    return;
+  }
+  const reason = args.slice(1).join(" ") || "AI false-positive";
+
+  const isNumeric = /^-?\d+$/.test(target);
+  const rpcArgs = isNumeric
+    ? { _actor_profile_id: profile.id, _telegram_user_id: parseInt(target, 10), _telegram_username: null, _reason: reason }
+    : { _actor_profile_id: profile.id, _telegram_user_id: null, _telegram_username: target, _reason: reason };
+
+  const { data, error } = await supabase.rpc("admin_unban_user", rpcArgs);
+  if (error) {
+    await sendMessage(profile.telegram_chat_id, `❌ Error: ${error.message}`);
+    return;
+  }
+  const result = data as { ok?: boolean; error?: string; alias?: string; telegram_chat_id?: number };
+  if (!result?.ok) {
+    const errMap: Record<string, string> = {
+      forbidden: "Akses ditolak.",
+      user_not_found: `User <code>${escapeHtml(target)}</code> tidak ditemukan.`,
+    };
+    await sendMessage(profile.telegram_chat_id, `❌ ${errMap[result?.error ?? ""] ?? result?.error ?? "Gagal."}`);
+    return;
+  }
+
+  if (result.telegram_chat_id) {
+    await safeSend(
+      result.telegram_chat_id,
+      `✅ <b>Akun kamu di-unban oleh admin.</b>\n\n` +
+      `Alasan: <i>${escapeHtml(reason)}</i>\n\n` +
+      `Maaf atas ketidaknyamanan — sistem AI kami salah deteksi. Silakan lanjut /cari.`,
+    );
+  }
+  await sendMessage(
+    profile.telegram_chat_id,
+    `✅ Unbanned <b>${escapeHtml(result.alias ?? target)}</b>.\nAlasan: <i>${escapeHtml(reason)}</i>`,
+  );
+}
+
 async function handleStepInput(
   supabase: ReturnType<typeof getSupabase>,
   profile: Profile,
