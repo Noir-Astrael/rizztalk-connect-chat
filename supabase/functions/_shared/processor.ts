@@ -2160,8 +2160,52 @@ async function handleCallbackQuery(
     });
   }
 
+  // Premium default settings
+  if (ns === "setdef") {
+    if (!profile.is_premium) {
+      await answerCallbackQuery(cq.id, "Hanya Premium", true);
+      return;
+    }
+    await logCallback(supabase, profile.id, data, "setdef");
+    if (action === "reset") {
+      await supabase.from("profiles").update({ default_search_gender: null, default_search_province: null }).eq("id", profile.id);
+      if (messageId) await editMessageReplyMarkup(chatId, messageId, null);
+      await answerCallbackQuery(cq.id, "Default direset");
+      await sendMessage(chatId, "🗑️ Default pencarian direset.");
+      return;
+    }
+    if (action === "g") {
+      const [, , gen] = data.split(":");
+      const value = gen === "any" ? null : gen;
+      await supabase.from("profiles").update({ default_search_gender: value }).eq("id", profile.id);
+      if (messageId) await editMessageReplyMarkup(chatId, messageId, null);
+      await answerCallbackQuery(cq.id, "Default gender disimpan");
+      await sendMessage(chatId, `✅ Default gender: <b>${gen === "male" ? "Pria" : gen === "female" ? "Wanita" : "Semua"}</b>.\n\nAtur juga provinsi default? Ketik /setdefault.`);
+      return;
+    }
+    if (action === "pmenu") {
+      if (messageId) await editMessageReplyMarkup(chatId, messageId, null);
+      await answerCallbackQuery(cq.id);
+      await sendInlineKeyboard(chatId, "📍 Pilih provinsi default:", provinceButtons("setdef:p", [
+        { text: "🌏 Semua Provinsi", callback_data: "setdef:p:any" },
+      ]));
+      return;
+    }
+    if (action === "p") {
+      const [, , prov] = data.split(":");
+      const value = prov === "any" ? null : prov;
+      await supabase.from("profiles").update({ default_search_province: value }).eq("id", profile.id);
+      if (messageId) await editMessageReplyMarkup(chatId, messageId, null);
+      await answerCallbackQuery(cq.id, "Default provinsi disimpan");
+      const pname = value ? (PROVINCES_ID.find((p) => p.code === value)?.name ?? value) : "Semua Provinsi";
+      await sendMessage(chatId, `✅ Default provinsi: <b>${pname}</b>.`);
+      return;
+    }
+  }
+
   // Quick command shortcuts (used by /start menu)
   if (ns === "cmd") {
+    await logCallback(supabase, profile.id, data, "cmd");
     if (messageId) await editMessageReplyMarkup(chatId, messageId, null);
     await answerCallbackQuery(cq.id);
     switch (action) {
@@ -2177,6 +2221,9 @@ async function handleCallbackQuery(
       case "ai": return handleAiStatus(supabase, profile);
       case "help": return handleHelp(profile);
       case "contact": return handleContact(profile);
+      case "status": return handleStatus(supabase, profile);
+      case "online": return handleOnline(supabase, profile);
+      case "setdefault": return handleSetDefault(supabase, profile);
     }
     return;
   }
