@@ -58,6 +58,7 @@ export default function OwnerDashboard() {
   const [sessions, setSessions] = useState<SessionRow[]>([]);
   const [payments, setPayments] = useState<PaymentRow[]>([]);
   const [stats, setStats] = useState<Record<string, number> | null>(null);
+  const [online, setOnline] = useState<{ online: number; chatting: number; queued: number } | null>(null);
   const [loading, setLoading] = useState(false);
   const [newAdminEmail, setNewAdminEmail] = useState("");
   const [openSession, setOpenSession] = useState<SessionRow | null>(null);
