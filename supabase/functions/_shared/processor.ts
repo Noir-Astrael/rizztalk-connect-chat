@@ -42,6 +42,8 @@ type Profile = {
   no_ai: boolean;
   onboarding_step?: string | null;
   pending_payment_ref?: string | null;
+  default_search_gender?: string | null;
+  default_search_province?: string | null;
 };
 
 type Step =
@@ -155,6 +157,11 @@ function mainMenuButtons(profile: Profile): InlineButton[][] {
       { text: "🤖 AI Status", callback_data: "cmd:ai" },
       { text: "❓ Bantuan", callback_data: "cmd:help" },
     ],
+    [
+      { text: "📋 Status Bukti", callback_data: "cmd:status" },
+      { text: "🟢 Online", callback_data: "cmd:online" },
+    ],
+    ...(profile.is_premium ? [[{ text: "⚙️ Default Premium", callback_data: "cmd:setdefault" }]] : []),
     [
       { text: `📞 Hubungi Admin (@${ADMIN_CONTACT_USERNAME})`, url: ADMIN_CONTACT_URL },
     ],
@@ -1121,9 +1128,17 @@ async function handleCari(
   }
   // Apply temporary overrides for this search (province / gender)
   const effective: Profile = { ...profile };
+  // Premium defaults: jika user premium punya default & tidak override eksplisit, pakai default
+  if (profile.is_premium) {
+    if (overrides.gender_pref === undefined && profile.default_search_gender && profile.default_search_gender !== "any") {
+      overrides.gender_pref = profile.default_search_gender as "male" | "female";
+    }
+    if (overrides.province_code === undefined && profile.default_search_province) {
+      overrides.province_code = profile.default_search_province;
+    }
+  }
   if (overrides.province_code !== undefined) {
     if (overrides.province_code === null) {
-      // Premium: "Semua Provinsi" — jangan filter provinsi
       effective.province_code = null;
       effective.province_name = "Semua Provinsi";
     } else {
@@ -1907,7 +1922,99 @@ async function handleAiStatus(supabase: ReturnType<typeof getSupabase>, profile:
   }
 }
 
-// ============= Callback query (inline button taps) =============
+// ============= Status / Online / Default Premium =============
+async function handleStatus(supabase: ReturnType<typeof getSupabase>, profile: Profile) {
+  const { data, error } = await supabase.rpc("get_my_payment_status", { _limit: 5 });
+  if (error) {
+    await safeSend(profile.telegram_chat_id, "❌ Gagal mengambil status pembayaran.");
+    return;
+  }
+  const rows = (data ?? []) as Array<{
+    reference_code: string; payment_kind: string; plan: string; amount_idr: number;
+    status: string; extracted_amount_idr: number | null; admin_note: string | null;
+    has_proof: boolean; created_at: string; reviewed_at: string | null;
+  }>;
+  const premStatus = profile.is_premium && profile.premium_until
+    ? `⭐ Premium aktif s/d <b>${new Date(profile.premium_until).toLocaleString("id-ID")}</b>`
+    : `Belum premium`;
+  if (rows.length === 0) {
+    await sendMessage(profile.telegram_chat_id, `<b>📋 Status Bukti Transfer</b>\n\n${premStatus}\n\n<i>Belum ada riwayat pembayaran.</i>`);
+    return;
+  }
+  const statusEmoji = (s: string) =>
+    s === "approved" ? "✅" : s === "rejected" ? "❌" : "⏳";
+  const lines = rows.map((r) =>
+    `${statusEmoji(r.status)} <code>${r.reference_code}</code> · ${r.payment_kind}/${r.plan}\n` +
+    `   Rp${r.amount_idr.toLocaleString("id-ID")} · status: <b>${r.status}</b>` +
+    (r.has_proof ? "" : "\n   ⚠️ Belum kirim foto bukti") +
+    (r.admin_note ? `\n   📝 Catatan admin: ${escapeHtml(r.admin_note).slice(0, 200)}` : "") +
+    `\n   ${new Date(r.created_at).toLocaleString("id-ID")}`,
+  );
+  await sendMessage(
+    profile.telegram_chat_id,
+    `<b>📋 Status Bukti Transfer & Premium</b>\n\n${premStatus}\n\n${lines.join("\n\n")}`,
+  );
+}
+
+async function handleOnline(supabase: ReturnType<typeof getSupabase>, profile: Profile) {
+  const { data, error } = await supabase.rpc("get_online_count", { _minutes: 5 });
+  if (error || !data) {
+    await safeSend(profile.telegram_chat_id, "❌ Gagal mengambil data online.");
+    return;
+  }
+  const d = data as { online: number; chatting: number; queued: number; window_minutes: number };
+  await sendMessage(
+    profile.telegram_chat_id,
+    `<b>🟢 User Online</b>\n\n` +
+    `• Online (${d.window_minutes} menit terakhir): <b>${d.online}</b>\n` +
+    `• Sedang ngobrol: <b>${d.chatting}</b>\n` +
+    `• Antrean cari teman: <b>${d.queued}</b>\n\n` +
+    `<i>Ketik /cari untuk join.</i>`,
+  );
+}
+
+async function handleSetDefault(supabase: ReturnType<typeof getSupabase>, profile: Profile) {
+  if (!profile.is_premium) {
+    await sendMessage(profile.telegram_chat_id,
+      `⭐ Fitur ini eksklusif <b>Premium</b>.\n\nKetik /upgrade untuk berlangganan (Rp${PREMIUM_MONTHLY_IDR.toLocaleString("id-ID")}/bulan).`);
+    return;
+  }
+  const curG = profile.default_search_gender ?? "any";
+  const curP = profile.default_search_province ?? "any";
+  const curPname = curP === "any" ? "Semua Provinsi" : (PROVINCES_ID.find((p) => p.code === curP)?.name ?? curP);
+  await sendInlineKeyboard(
+    profile.telegram_chat_id,
+    `⭐ <b>Default Pencarian Premium</b>\n\n` +
+    `Filter ini otomatis dipakai setiap kamu /cari (tanpa harus pilih ulang).\n\n` +
+    `• Gender saat ini: <b>${curG === "male" ? "Pria" : curG === "female" ? "Wanita" : "Semua"}</b>\n` +
+    `• Provinsi saat ini: <b>${curPname}</b>\n\n` +
+    `Pilih gender default:`,
+    [[
+      { text: "👨 Pria", callback_data: "setdef:g:male" },
+      { text: "👩 Wanita", callback_data: "setdef:g:female" },
+      { text: "🌐 Semua", callback_data: "setdef:g:any" },
+    ], [
+      { text: "📍 Atur Provinsi Default", callback_data: "setdef:pmenu" },
+      { text: "🗑️ Reset Semua", callback_data: "setdef:reset" },
+    ]],
+  );
+}
+
+async function logCallback(supabase: ReturnType<typeof getSupabase>, profileId: string, data: string, action: string) {
+  try {
+    await supabase.from("webhook_logs").insert({
+      source: "telegram",
+      event: `callback:${data.split(":")[0]}`,
+      level: "info",
+      message: `${action} (data=${data})`,
+      payload: { profile_id: profileId, data },
+    });
+  } catch (e) {
+    console.error("logCallback failed", e);
+  }
+}
+
+
 async function handleCallbackQuery(
   supabase: ReturnType<typeof getSupabase>,
   cq: TgCallbackQuery,
@@ -2058,8 +2165,52 @@ async function handleCallbackQuery(
     });
   }
 
+  // Premium default settings
+  if (ns === "setdef") {
+    if (!profile.is_premium) {
+      await answerCallbackQuery(cq.id, "Hanya Premium", true);
+      return;
+    }
+    await logCallback(supabase, profile.id, data, "setdef");
+    if (action === "reset") {
+      await supabase.from("profiles").update({ default_search_gender: null, default_search_province: null }).eq("id", profile.id);
+      if (messageId) await editMessageReplyMarkup(chatId, messageId, null);
+      await answerCallbackQuery(cq.id, "Default direset");
+      await sendMessage(chatId, "🗑️ Default pencarian direset.");
+      return;
+    }
+    if (action === "g") {
+      const [, , gen] = data.split(":");
+      const value = gen === "any" ? null : gen;
+      await supabase.from("profiles").update({ default_search_gender: value }).eq("id", profile.id);
+      if (messageId) await editMessageReplyMarkup(chatId, messageId, null);
+      await answerCallbackQuery(cq.id, "Default gender disimpan");
+      await sendMessage(chatId, `✅ Default gender: <b>${gen === "male" ? "Pria" : gen === "female" ? "Wanita" : "Semua"}</b>.\n\nAtur juga provinsi default? Ketik /setdefault.`);
+      return;
+    }
+    if (action === "pmenu") {
+      if (messageId) await editMessageReplyMarkup(chatId, messageId, null);
+      await answerCallbackQuery(cq.id);
+      await sendInlineKeyboard(chatId, "📍 Pilih provinsi default:", provinceButtons("setdef:p", [
+        { text: "🌏 Semua Provinsi", callback_data: "setdef:p:any" },
+      ]));
+      return;
+    }
+    if (action === "p") {
+      const [, , prov] = data.split(":");
+      const value = prov === "any" ? null : prov;
+      await supabase.from("profiles").update({ default_search_province: value }).eq("id", profile.id);
+      if (messageId) await editMessageReplyMarkup(chatId, messageId, null);
+      await answerCallbackQuery(cq.id, "Default provinsi disimpan");
+      const pname = value ? (PROVINCES_ID.find((p) => p.code === value)?.name ?? value) : "Semua Provinsi";
+      await sendMessage(chatId, `✅ Default provinsi: <b>${pname}</b>.`);
+      return;
+    }
+  }
+
   // Quick command shortcuts (used by /start menu)
   if (ns === "cmd") {
+    await logCallback(supabase, profile.id, data, "cmd");
     if (messageId) await editMessageReplyMarkup(chatId, messageId, null);
     await answerCallbackQuery(cq.id);
     switch (action) {
@@ -2075,6 +2226,9 @@ async function handleCallbackQuery(
       case "ai": return handleAiStatus(supabase, profile);
       case "help": return handleHelp(profile);
       case "contact": return handleContact(profile);
+      case "status": return handleStatus(supabase, profile);
+      case "online": return handleOnline(supabase, profile);
+      case "setdefault": return handleSetDefault(supabase, profile);
     }
     return;
   }
@@ -2190,6 +2344,10 @@ export async function processUpdate(supabase: ReturnType<typeof getSupabase>, up
       case "/contact":
       case "/admin_contact":
       case "/hubungi": return handleContact(profile);
+      case "/status": return handleStatus(supabase, profile);
+      case "/online": return handleOnline(supabase, profile);
+      case "/setdefault":
+      case "/default": return handleSetDefault(supabase, profile);
       default:
         await sendMessage(profile.telegram_chat_id, `Perintah tidak dikenal. Ketik /help.`);
         return;

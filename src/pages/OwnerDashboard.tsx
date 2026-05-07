@@ -58,6 +58,7 @@ export default function OwnerDashboard() {
   const [sessions, setSessions] = useState<SessionRow[]>([]);
   const [payments, setPayments] = useState<PaymentRow[]>([]);
   const [stats, setStats] = useState<Record<string, number> | null>(null);
+  const [online, setOnline] = useState<{ online: number; chatting: number; queued: number } | null>(null);
   const [loading, setLoading] = useState(false);
   const [newAdminEmail, setNewAdminEmail] = useState("");
   const [openSession, setOpenSession] = useState<SessionRow | null>(null);
@@ -75,7 +76,7 @@ export default function OwnerDashboard() {
   const refresh = useCallback(async () => {
     setLoading(true);
     try {
-      const [s, a, ses, pay] = await Promise.all([
+      const [s, a, ses, pay, on] = await Promise.all([
         supabase.rpc("admin_dashboard_stats"),
         supabase.rpc("list_admins"),
         supabase.rpc("owner_active_sessions"),
@@ -84,11 +85,13 @@ export default function OwnerDashboard() {
           .select("id, reference_code, payment_kind, plan, amount_idr, extracted_amount_idr, status, created_at, ai_validation, profiles(alias, telegram_user_id)")
           .order("created_at", { ascending: false })
           .limit(50),
+        supabase.rpc("get_online_count", { _minutes: 5 }),
       ]);
       setStats((s.data as Record<string, number>) ?? null);
       setAdmins((a.data as AdminRow[]) ?? []);
       setSessions((ses.data as SessionRow[]) ?? []);
       setPayments((pay.data as unknown as PaymentRow[]) ?? []);
+      setOnline((on.data as { online: number; chatting: number; queued: number }) ?? null);
     } catch (e) {
       console.error(e);
       toast.error("Gagal memuat data.");
@@ -299,6 +302,9 @@ export default function OwnerDashboard() {
         {tab === "overview" && stats && (
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             {([
+              ["Online (5m)", online?.online ?? 0, Activity],
+              ["Sedang Ngobrol", online?.chatting ?? 0, MessageSquare],
+              ["Antrean Cari", online?.queued ?? 0, Eye],
               ["Total Pengguna", stats.total_users, Users],
               ["Premium Aktif", stats.premium_users, Sparkles],
               ["Sesi Aktif", stats.active_chats, MessageSquare],
