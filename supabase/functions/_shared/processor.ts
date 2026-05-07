@@ -158,6 +158,11 @@ function mainMenuButtons(profile: Profile): InlineButton[][] {
       { text: "❓ Bantuan", callback_data: "cmd:help" },
     ],
     [
+      { text: "📋 Status Bukti", callback_data: "cmd:status" },
+      { text: "🟢 Online", callback_data: "cmd:online" },
+    ],
+    ...(profile.is_premium ? [[{ text: "⚙️ Default Premium", callback_data: "cmd:setdefault" }]] : []),
+    [
       { text: `📞 Hubungi Admin (@${ADMIN_CONTACT_USERNAME})`, url: ADMIN_CONTACT_URL },
     ],
   ];
