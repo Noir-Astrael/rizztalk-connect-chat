@@ -42,6 +42,8 @@ type Profile = {
   no_ai: boolean;
   onboarding_step?: string | null;
   pending_payment_ref?: string | null;
+  default_search_gender?: string | null;
+  default_search_province?: string | null;
 };
 
 type Step =
