@@ -302,6 +302,9 @@ export default function OwnerDashboard() {
         {tab === "overview" && stats && (
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             {([
+              ["Online (5m)", online?.online ?? 0, Activity],
+              ["Sedang Ngobrol", online?.chatting ?? 0, MessageSquare],
+              ["Antrean Cari", online?.queued ?? 0, Eye],
               ["Total Pengguna", stats.total_users, Users],
               ["Premium Aktif", stats.premium_users, Sparkles],
               ["Sesi Aktif", stats.active_chats, MessageSquare],
