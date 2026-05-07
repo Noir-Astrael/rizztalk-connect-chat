@@ -353,6 +353,8 @@ export type Database = {
           bio: string | null
           birth_year: number | null
           created_at: string
+          default_search_gender: string | null
+          default_search_province: string | null
           gender: Database["public"]["Enums"]["gender_type"] | null
           gender_preference: Database["public"]["Enums"]["gender_preference"]
           id: string
@@ -383,6 +385,8 @@ export type Database = {
           bio?: string | null
           birth_year?: number | null
           created_at?: string
+          default_search_gender?: string | null
+          default_search_province?: string | null
           gender?: Database["public"]["Enums"]["gender_type"] | null
           gender_preference?: Database["public"]["Enums"]["gender_preference"]
           id?: string
@@ -413,6 +417,8 @@ export type Database = {
           bio?: string | null
           birth_year?: number | null
           created_at?: string
+          default_search_gender?: string | null
+          default_search_province?: string | null
           gender?: Database["public"]["Enums"]["gender_type"] | null
           gender_preference?: Database["public"]["Enums"]["gender_preference"]
           id?: string
@@ -842,6 +848,22 @@ export type Database = {
         }
         Returns: string
       }
+      get_my_payment_status: {
+        Args: { _limit?: number }
+        Returns: {
+          admin_note: string
+          amount_idr: number
+          created_at: string
+          extracted_amount_idr: number
+          has_proof: boolean
+          payment_kind: string
+          plan: string
+          reference_code: string
+          reviewed_at: string
+          status: string
+        }[]
+      }
+      get_online_count: { Args: { _minutes?: number }; Returns: Json }
       get_owner_notify_chats: {
         Args: never
         Returns: {
@@ -968,6 +990,10 @@ export type Database = {
           _reason?: string
           _reference_code: string
         }
+        Returns: Json
+      }
+      set_premium_defaults: {
+        Args: { _gender: string; _profile_id: string; _province: string }
         Returns: Json
       }
     }
