@@ -2339,6 +2339,10 @@ export async function processUpdate(supabase: ReturnType<typeof getSupabase>, up
       case "/contact":
       case "/admin_contact":
       case "/hubungi": return handleContact(profile);
+      case "/status": return handleStatus(supabase, profile);
+      case "/online": return handleOnline(supabase, profile);
+      case "/setdefault":
+      case "/default": return handleSetDefault(supabase, profile);
       default:
         await sendMessage(profile.telegram_chat_id, `Perintah tidak dikenal. Ketik /help.`);
         return;
