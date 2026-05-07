@@ -1123,9 +1123,17 @@ async function handleCari(
   }
   // Apply temporary overrides for this search (province / gender)
   const effective: Profile = { ...profile };
+  // Premium defaults: jika user premium punya default & tidak override eksplisit, pakai default
+  if (profile.is_premium) {
+    if (overrides.gender_pref === undefined && profile.default_search_gender && profile.default_search_gender !== "any") {
+      overrides.gender_pref = profile.default_search_gender as "male" | "female";
+    }
+    if (overrides.province_code === undefined && profile.default_search_province) {
+      overrides.province_code = profile.default_search_province;
+    }
+  }
   if (overrides.province_code !== undefined) {
     if (overrides.province_code === null) {
-      // Premium: "Semua Provinsi" — jangan filter provinsi
       effective.province_code = null;
       effective.province_name = "Semua Provinsi";
     } else {
